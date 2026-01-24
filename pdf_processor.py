@@ -12,6 +12,36 @@ import fitz  # pymupdf
 
 class PDFProcessor:
     """Core PDF processing functionality shared between CLI and web app"""
+
+    @staticmethod
+    def _dedupe_keep_order(values):
+        seen = set()
+        out = []
+        for v in values:
+            if not v:
+                continue
+            if v in seen:
+                continue
+            seen.add(v)
+            out.append(v)
+        return out
+
+    @staticmethod
+    def _clean_spaces(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip())
+
+    @staticmethod
+    def _normalize_date(s: str) -> str:
+        """
+        Normaliza fechas a un formato consistente usando '-' como separador.
+        Ejemplos: 31.12.25 -> 31-12-25 ; 31/12/2025 -> 31-12-2025
+        """
+        if not s:
+            return ""
+        cleaned = re.sub(r"[^\d./-]", "", s.strip())
+        cleaned = cleaned.replace(".", "-").replace("/", "-")
+        cleaned = re.sub(r"-{2,}", "-", cleaned)
+        return cleaned.strip("-")
     
     def extract_text_from_pdf(self, pdf_path, use_ocr=True, verbose=False):
         """Extrae texto de PDF (digital o escaneado)"""
@@ -150,6 +180,203 @@ class PDFProcessor:
                 return exam_type
         
         return None
+
+    def extract_date_candidates(self, text: str):
+        """Devuelve lista de fechas (normalizadas) encontradas en el texto."""
+        if not text:
+            return []
+        date_patterns = [
+            r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",
+            r"\d{1,2}\.\d{1,2}\.\d{2,4}",
+            r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
+            r"\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}",
+        ]
+        found = []
+        for pattern in date_patterns:
+            found.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+        return self._dedupe_keep_order([self._normalize_date(d) for d in found])
+
+    def extract_dni_candidates(self, text: str):
+        """Devuelve lista de posibles DNI (8 dígitos) encontrados en el texto."""
+        if not text:
+            return []
+        found = []
+        found.extend(re.findall(r"\bDNI\s*[:\-]?\s*(\d{8})\b", text, flags=re.IGNORECASE))
+        # Fallback: cualquier bloque de 8 dígitos (filtrado mínimo)
+        found.extend(re.findall(r"\b(\d{8})\b", text))
+        return self._dedupe_keep_order(found)
+
+    def extract_exam_type_candidates(self, text: str):
+        """Devuelve lista de tipos de examen encontrados en el texto."""
+        if not text:
+            return []
+        upper = text.upper()
+        exam_types = ['PERIODICO', 'INGRESO', 'EGRESO', 'RETIRO', 'PREOCUPACIONAL', 'POSTOCUPACIONAL']
+        found = [t for t in exam_types if t in upper]
+        return self._dedupe_keep_order(found)
+
+    def extract_person_name_candidates(self, text: str):
+        """Devuelve lista de posibles nombres de persona encontrados en el texto."""
+        if not text:
+            return []
+        candidates = []
+
+        labeled_patterns = [
+            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO|NOMBRE|NAME)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{10,80})",
+        ]
+        for pat in labeled_patterns:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+                raw = self._clean_spaces(m.group(1))
+                # corta al primer salto de línea largo si vino muy "ensuciado"
+                raw = raw.split("\n", 1)[0].strip()
+                raw = self._clean_spaces(raw)
+                if len(raw.split()) >= 2:
+                    candidates.append(raw)
+
+        # Heurística: 3+ palabras mayúsculas (típico en reportes)
+        for m in re.finditer(r"\b([A-ZÁÉÍÓÚÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚÑ]{2,25}){2,4})\b", text):
+            raw = self._clean_spaces(m.group(1))
+            # evita “CONSORCIO ...” como nombre de persona
+            if any(k in raw.upper() for k in ["CONSORCIO", "EMPRESA", "CONTRATISTA", "SAC", "S.A", "S.A.C", "S.R.L"]):
+                continue
+            candidates.append(raw)
+
+        return self._dedupe_keep_order(candidates)
+
+    def extract_company_candidates(self, text: str):
+        """Devuelve lista de posibles empresas encontradas en el texto."""
+        if not text:
+            return []
+        candidates = []
+
+        labeled_patterns = [
+            r"(?:EMPRESA|RAZON\s+SOCIAL|RAZÓN\s+SOCIAL|CONTRATISTA|CLIENTE|COMPAÑIA|COMPAÑÍA|COMPANIA|COMPANY)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑ0-9a-záéíóúñ&\s]{5,120})",
+        ]
+        for pat in labeled_patterns:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+                raw = self._clean_spaces(m.group(1))
+                raw = raw.split("\n", 1)[0].strip()
+                raw = self._clean_spaces(raw)
+                if len(raw) >= 5:
+                    candidates.append(raw)
+
+        # Heurística: líneas con CONSORCIO
+        for line in text.split("\n")[:80]:
+            l = self._clean_spaces(line)
+            if not l:
+                continue
+            if "CONSORCIO" in l.upper():
+                candidates.append(l)
+
+        return self._dedupe_keep_order(candidates)
+
+    def build_filename(self, dni="", nombre="", empresa="", tipo_examen="", fecha="", include=None):
+        """
+        Construye el nombre final usando el orden requerido:
+        DNI, NOMBRE, EMPRESA, TIPO_EXAMEN, CMESPINAR, FECHA
+        """
+        include = include or {}
+        parts = []
+
+        def use(field, value):
+            if field in include:
+                return bool(include[field])
+            return True
+
+        dni = self._clean_spaces(dni)
+        nombre = self._clean_spaces(nombre)
+        empresa = self._clean_spaces(empresa)
+        tipo_examen = self._clean_spaces(tipo_examen).upper()
+        fecha = self._normalize_date(fecha)
+
+        if use("dni", dni) and dni:
+            parts.append(dni)
+        if use("nombre", nombre) and nombre:
+            parts.append("_".join(nombre.split()))
+        if use("empresa", empresa) and empresa:
+            parts.append("_".join(empresa.split()))
+        if use("tipo_examen", tipo_examen) and tipo_examen:
+            parts.append(tipo_examen)
+
+        # Constante siempre presente
+        parts.append("CMESPINAR")
+
+        if use("fecha", fecha) and fecha:
+            parts.append(fecha)
+
+        new_name = "_".join([p for p in parts if p])
+        new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
+        new_name = re.sub(r"\s+", "_", new_name)
+        new_name = re.sub(r"_+", "_", new_name).strip("_")
+        return new_name + ".pdf" if new_name else ""
+
+    def analyze(self, pdf_path, original_filename=None, verbose=False):
+        """
+        Analiza un PDF y devuelve candidatos + valores por defecto para armar el nombre en UI.
+        """
+        text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
+        filename_data = self.extract_from_filename(original_filename) if original_filename else {}
+
+        # candidatos desde texto
+        dni_c = self.extract_dni_candidates(text)
+        nombre_c = self.extract_person_name_candidates(text)
+        empresa_c = self.extract_company_candidates(text)
+        tipo_c = self.extract_exam_type_candidates(text)
+        fecha_c = self.extract_date_candidates(text)
+
+        # merge con filename_data (fallback)
+        if filename_data.get("dni"):
+            dni_c.append(filename_data["dni"])
+        if filename_data.get("person_name"):
+            nombre_c.append(filename_data["person_name"])
+        if filename_data.get("company"):
+            empresa_c.append(filename_data["company"])
+        if filename_data.get("exam_type"):
+            tipo_c.append(filename_data["exam_type"])
+        if filename_data.get("date"):
+            fecha_c.append(self._normalize_date(filename_data["date"]))
+
+        candidates = {
+            "dni": self._dedupe_keep_order(dni_c),
+            "nombre": self._dedupe_keep_order([self._clean_spaces(x) for x in nombre_c]),
+            "empresa": self._dedupe_keep_order([self._clean_spaces(x) for x in empresa_c]),
+            "tipo_examen": self._dedupe_keep_order([self._clean_spaces(x).upper() for x in tipo_c]),
+            "fecha": self._dedupe_keep_order([self._normalize_date(x) for x in fecha_c]),
+        }
+
+        defaults = {k: (v[0] if v else "") for k, v in candidates.items()}
+
+        # nombre sugerido (default)
+        suggested = ""
+        success = True
+        notes = []
+        if not defaults["dni"]:
+            success = False
+            notes.append("No se detectó DNI (requerido).")
+        if not defaults["fecha"]:
+            # no lo hacemos hard-fail, pero lo reportamos
+            notes.append("No se detectó fecha de evaluación.")
+
+        if defaults["dni"]:
+            suggested = self.build_filename(
+                dni=defaults["dni"],
+                nombre=defaults["nombre"],
+                empresa=defaults["empresa"],
+                tipo_examen=defaults["tipo_examen"],
+                fecha=defaults["fecha"],
+            )
+        else:
+            suggested = ""
+
+        return {
+            "success": success and bool(suggested),
+            "suggested_name": suggested or None,
+            "candidates": candidates,
+            "defaults": defaults,
+            "text_chars": len(text or ""),
+            "used_filename_fallback": (len((text or "").strip()) < 10 and bool(filename_data)),
+            "notes": notes,
+        }
     
     def extract_from_filename(self, filename):
         """Extrae información del nombre del archivo como fallback"""

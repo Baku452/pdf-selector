@@ -31,7 +31,7 @@ pip install -r pdf-renamer-requirements.txt
 
 1. Start the web server:
 ```bash
-python app.py
+python run_web.py
 ```
 
 2. Open your browser and navigate to:
@@ -45,8 +45,38 @@ http://localhost:5001
    ```
 
 3. Drag and drop PDF files or click to select them
-4. Click "Procesar PDFs" to get suggested names
-5. View the suggested filenames based on extracted content
+4. Click "Procesar PDFs"
+5. For each PDF, select the detected values (dropdown) and edit them (input)
+6. Copy the final filename preview
+
+## Windows (.exe) build (PyInstaller)
+
+Yes — you can distribute this as a Windows executable that starts the local web server and opens the browser.
+
+**Important**: builds must be done on Windows to produce a Windows `.exe`.
+
+### Prerequisites (Windows)
+
+- **Python 3.x** installed
+- **Tesseract OCR** installed and in PATH  
+  - Recommended: UB Mannheim build (`https://github.com/UB-Mannheim/tesseract/wiki`)
+- **Poppler** installed and in PATH (required by `pdf2image`)  
+  - Add Poppler `bin` folder to PATH
+
+### Build steps
+
+```bash
+pip install -r pdf-renamer-requirements.txt
+pip install pyinstaller
+
+pyinstaller --onefile --name PDFNameSetter ^
+  --add-data "templates;templates" ^
+  --add-data "static;static" ^
+  run_web.py
+```
+
+Then run:
+- `dist\\PDFNameSetter.exe`
 
 ## How It Works
 
@@ -64,7 +94,9 @@ The application:
 ```
 PDFNameSetter/
 ├── app.py                    # Flask web application
+├── run_web.py                # Entry point (opens browser)
 ├── pdf_renamer.py           # Original CLI version
+├── pdf_processor.py          # Shared extraction logic
 ├── templates/
 │   └── index.html           # Web interface
 ├── static/

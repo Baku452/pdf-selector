@@ -5,13 +5,25 @@ Flask-based web app that allows users to upload PDFs and get suggested names
 """
 
 import os
+import sys
+from pathlib import Path
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 from pdf_processor import PDFProcessor
 
-app = Flask(__name__)
+# PyInstaller compatibility: templates/static relative to bundle/extracted dir
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+UPLOAD_DIR = BASE_DIR / "uploads"
+
+app = Flask(
+    __name__,
+    template_folder=str(TEMPLATES_DIR),
+    static_folder=str(STATIC_DIR),
+)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
 # Ensure upload folder exists
@@ -62,27 +74,21 @@ def upload_pdf():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             
-            # Generate suggested name (pass original filename for fallback extraction)
-            suggested_name, metadata = processor.generate_filename_parts(
-                filepath, 
-                verbose=False, 
-                original_filename=file.filename
+            analysis = processor.analyze(
+                filepath,
+                original_filename=file.filename,
+                verbose=False,
             )
-            
-            if suggested_name:
-                result = {
-                    'success': True,
-                    'suggested_name': suggested_name,
-                    'original_name': file.filename,
-                    'metadata': metadata or {}
-                }
-            else:
-                result = {
-                    'success': False,
-                    'suggested_name': None,
-                    'original_name': file.filename,
-                    'message': 'No se pudo extraer información suficiente del PDF'
-                }
+
+            result = {
+                "success": bool(analysis.get("success")),
+                "original_name": file.filename,
+                "suggested_name": analysis.get("suggested_name"),
+                "candidates": analysis.get("candidates", {}),
+                "defaults": analysis.get("defaults", {}),
+                "notes": analysis.get("notes", []),
+                "text_chars": analysis.get("text_chars", 0),
+            }
             
             # Clean up temporary file
             try:
@@ -112,4 +118,4 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     print(f"\n🌐 Servidor iniciado en http://localhost:{port}")
     print("   Presiona Ctrl+C para detener el servidor\n")
-    app.run(debug=True, host='0.0.0.0', port=port)
+    app.run(debug=True, host='127.0.0.1', port=port)
