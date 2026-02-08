@@ -47,7 +47,42 @@ http://localhost:5001
 3. Drag and drop PDF files or click to select them
 4. Click "Procesar PDFs"
 5. For each PDF, select the detected values (dropdown) and edit them (input)
-6. Copy the final filename preview
+6. Use **Descargar PDF** to get that file with the chosen name, or **Descargar todos (ZIP)** to get all PDFs in a ZIP with their new names.
+
+---
+
+## Cómo mandar el .exe a otra persona para que lo pruebe
+
+1. **Generar el .exe (en Windows)**  
+   - En una PC con Windows, instala Python 3.x, Tesseract y Poppler (ver requisitos abajo).  
+   - En la carpeta del proyecto:
+     ```bash
+     pip install -r pdf-renamer-requirements.txt
+     pip install pyinstaller
+     pyinstaller --onefile --name PDFNameSetter --add-data "templates;templates" --add-data "static;static" run_web.py
+     ```
+   - El ejecutable queda en `dist\PDFNameSetter.exe`.
+
+2. **Qué enviar**  
+   - Envía el archivo **`PDFNameSetter.exe`** (carpeta `dist\`).  
+   - La otra persona no necesita tener Python ni el código.
+
+3. **Requisitos en la PC de la otra persona**  
+   - **Windows** (mismo tipo de arquitectura: 64 bits si compilaste en 64 bits).  
+   - **Tesseract OCR** instalado y en el PATH (para OCR en PDFs escaneados).  
+     - Descarga: [Tesseract en GitHub](https://github.com/UB-Mannheim/tesseract/wiki).  
+   - **Poppler** (para `pdf2image`): añadir la carpeta `bin` de Poppler al PATH.  
+     - Sin Tesseract/Poppler la app puede seguir funcionando para PDFs con texto digital; el OCR fallará en escaneados.
+
+4. **Cómo probar**  
+   - Doble clic en `PDFNameSetter.exe`.  
+   - Se abre el navegador en `http://127.0.0.1:5001`.  
+   - Sube PDFs, ajusta nombres y usa **Descargar PDF** o **Descargar todos (ZIP)**.
+
+5. **Antivirus**  
+   - Algunos antivirus marcan .exe empaquetados con PyInstaller. Si es tu build, puedes añadir una excepción o firmar el ejecutable.
+
+---
 
 ## Windows (.exe) build (PyInstaller)
 
@@ -77,6 +112,35 @@ pyinstaller --onefile --name PDFNameSetter ^
 
 Then run:
 - `dist\\PDFNameSetter.exe`
+
+---
+
+## Desplegar en Vercel (y por qué suele “no funcionar”)
+
+Esta app es un **servidor Flask** que:
+- Sube archivos al servidor.
+- Usa **Tesseract** y **Poppler** (binarios del sistema) para OCR y conversión de PDF a imagen.
+- Usa **PyMuPDF** para leer PDFs.
+
+En **Vercel** todo corre en **funciones serverless**: no hay proceso largo, no hay sistema de archivos persistente y **no hay Tesseract ni Poppler instalados** por defecto. Por eso, tal como está, **suele no funcionar** en Vercel (errores de “módulo no encontrado” o “comando no encontrado” al usar OCR/pdf2image).
+
+### Opciones recomendadas
+
+1. **Usar la app en local o con .exe**  
+   - `python run_web.py` o el `PDFNameSetter.exe` en Windows.
+
+2. **Desplegar en un VPS o PaaS con soporte Python completo**  
+   - **Railway**, **Render**, **Fly.io**, **PythonAnywhere**, etc.  
+   - Ahí puedes instalar Tesseract y Poppler y ejecutar Flask con `gunicorn` o `waitress`.
+
+### Si aun así quieres probar en Vercel
+
+- Vercel solo expone **funciones serverless** (y sitios estáticos). No puedes instalar Tesseract/Poppler en el entorno estándar.
+- Podrías:
+  - **Quitar OCR** y usar solo extracción de texto digital (PyMuPDF) y desplegar con `vercel build` + un handler serverless (por ejemplo `api/index.py` que envuelva la app con `serverless-wsgi`). Aun así, el límite de tiempo y tamaño de respuesta de Vercel puede cortar subidas o descargas grandes.
+  - O **usar un servicio externo de OCR** por API y mantener en Vercel solo la lógica web; es un cambio grande de arquitectura.
+
+**Resumen**: para que “funcione” igual que en local (con OCR y descarga de PDFs renombrados), lo adecuado es **no usar Vercel** y desplegar en un host donde puedas instalar dependencias del sistema (Railway, Render, etc.).
 
 ## How It Works
 
@@ -108,6 +172,6 @@ PDFNameSetter/
 
 ## Notes
 
-- Uploaded files are processed temporarily and deleted after processing
+- Uploaded files are kept in a temporary session folder until you download them (single PDF or ZIP); after download they are removed.
 - Maximum file size: 100MB per file
 - The app processes the first 3 pages for OCR to optimize performance
