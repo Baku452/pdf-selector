@@ -5,9 +5,18 @@ Core functionality for extracting information from PDFs
 """
 
 import re
-import pytesseract
-from pdf2image import convert_from_path
-import fitz  # pymupdf
+
+try:
+    import fitz  # pymupdf
+except ImportError:
+    fitz = None
+
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except ImportError:
+    pytesseract = None
+    convert_from_path = None
 
 
 class PDFProcessor:
@@ -48,21 +57,22 @@ class PDFProcessor:
         text = ""
 
         # Intenta extraer texto digital primero
-        try:
-            doc = fitz.open(pdf_path)
-            for page in doc:
-                text += page.get_text()
-            doc.close()
+        if fitz is not None:
+            try:
+                doc = fitz.open(pdf_path)
+                for page in doc:
+                    text += page.get_text()
+                doc.close()
 
-            # Si hay suficiente texto, no necesita OCR
-            if len(text.strip()) > 50:
-                return text
-        except Exception as e:
-            if verbose:
-                print(f"  ⚠️  Error extrayendo texto digital: {e}")
+                # Si hay suficiente texto, no necesita OCR
+                if len(text.strip()) > 50:
+                    return text
+            except Exception as e:
+                if verbose:
+                    print(f"  ⚠️  Error extrayendo texto digital: {e}")
 
         # Si no hay texto o es muy poco, usa OCR
-        if use_ocr:
+        if use_ocr and pytesseract is not None and convert_from_path is not None:
             if verbose:
                 print(f"  🔍 Aplicando OCR (documento escaneado)...")
             try:
@@ -177,7 +187,11 @@ class PDFProcessor:
 
         for doc_type, keywords in doc_types.items():
             if any(keyword in text_lower for keyword in keywords):
-                return doc_type.upper() if doc_type == "emoa" else doc_type.capitalize()
+                return (
+                    doc_type.upper()
+                    if doc_type == "emoa"
+                    else doc_type.capitalize()
+                )
 
         return None
 
@@ -212,7 +226,9 @@ class PDFProcessor:
         found = []
         for pattern in date_patterns:
             found.extend(re.findall(pattern, text, flags=re.IGNORECASE))
-        return self._dedupe_keep_order([self._normalize_date(d) for d in found])
+        return self._dedupe_keep_order(
+            [self._normalize_date(d) for d in found]
+        )
 
     def extract_dni_candidates(self, text: str):
         """Devuelve lista de posibles DNI (8 dígitos) encontrados en el texto."""
@@ -220,7 +236,9 @@ class PDFProcessor:
             return []
         found = []
         found.extend(
-            re.findall(r"\bDNI\s*[:\-]?\s*(\d{8})\b", text, flags=re.IGNORECASE)
+            re.findall(
+                r"\bDNI\s*[:\-]?\s*(\d{8})\b", text, flags=re.IGNORECASE
+            )
         )
         # Fallback: cualquier bloque de 8 dígitos (filtrado mínimo)
         found.extend(re.findall(r"\b(\d{8})\b", text))
@@ -364,7 +382,9 @@ class PDFProcessor:
         """
         text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
         filename_data = (
-            self.extract_from_filename(original_filename) if original_filename else {}
+            self.extract_from_filename(original_filename)
+            if original_filename
+            else {}
         )
 
         # candidatos desde texto
@@ -445,7 +465,9 @@ class PDFProcessor:
         name_without_ext = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0]
 
         # Extrae fecha (DD.MM.YY o DD-MM-YY)
-        date_match = re.search(r"(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})", name_without_ext)
+        date_match = re.search(
+            r"(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})", name_without_ext
+        )
         if date_match:
             parts["date"] = date_match.group(1)
 
@@ -466,7 +488,7 @@ class PDFProcessor:
                 break
 
         # Extrae nombre de persona (después de DNI, antes de guion)
-        # Formato: "31.12.25 EMOA 77206347 GONZA URQUIZO JULIO CESAR-CONSORCIO..."
+        # Formato: "31.12.25 EMOA 77206347 GONZA URQUIZO JULIO CESAR-CONSORCIO"
         # Busca: número de DNI seguido de palabras en mayúsculas hasta un guion
         name_patterns = [
             r"\d{8}\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{8,50}?)(?:\s*-)",  # DNI seguido de nombre hasta guion
@@ -501,7 +523,9 @@ class PDFProcessor:
                     if w.upper() not in ["MECANICA", "REVESTIMIENTO", "Y"]
                 ]
                 company_words = (
-                    important_words[:4] if important_words else company_words[:3]
+                    important_words[:4]
+                    if important_words
+                    else company_words[:3]
                 )
             else:
                 company_words = company_words[:4]
@@ -511,7 +535,9 @@ class PDFProcessor:
 
         return parts
 
-    def generate_filename_parts(self, pdf_path, verbose=False, original_filename=None):
+    def generate_filename_parts(
+        self, pdf_path, verbose=False, original_filename=None
+    ):
         """Extrae información y genera partes del nombre de archivo"""
         # Extrae texto del PDF
         text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
@@ -530,7 +556,8 @@ class PDFProcessor:
                 parts = []
                 metadata = {}
 
-                # Orden específico: DNI, NOMBRE, EMPRESA, TIPO_EXAMEN, CMESPINAR, FECHA
+                # Orden específico: DNI, NOMBRE, EMPRESA, TIPO_EXAMEN,
+                # CMESPINAR, FECHA
 
                 # 1. DNI (requerido)
                 if filename_data.get("dni"):
@@ -544,14 +571,18 @@ class PDFProcessor:
 
                 # 2. NOMBRE
                 if filename_data.get("person_name"):
-                    name_clean = "_".join(filename_data["person_name"].split()[:4])
+                    name_clean = "_".join(
+                        filename_data["person_name"].split()[:4]
+                    )
                     name_clean = re.sub(r'[<>:"/\\|?*&]', "", name_clean)
                     parts.append(name_clean)
                     metadata["nombre"] = filename_data["person_name"]
 
                 # 3. EMPRESA
                 if filename_data.get("company"):
-                    company_clean = "_".join(filename_data["company"].split()[:4])
+                    company_clean = "_".join(
+                        filename_data["company"].split()[:4]
+                    )
                     company_clean = re.sub(r'[<>:"/\\|?*&]', "", company_clean)
                     parts.append(company_clean)
                     metadata["empresa"] = filename_data["company"]
@@ -568,7 +599,9 @@ class PDFProcessor:
                 # 6. FECHA DE EVALUACION
                 if filename_data.get("date"):
                     date_clean = (
-                        filename_data["date"].replace(".", "-").replace("/", "-")
+                        filename_data["date"]
+                        .replace(".", "-")
+                        .replace("/", "-")
                     )
                     parts.append(date_clean)
                     metadata["fecha"] = filename_data["date"]
@@ -583,7 +616,9 @@ class PDFProcessor:
 
             # Si tampoco hay datos del nombre, retorna None
             if verbose:
-                print(f"  ⚠️  Texto extraído: {len(text) if text else 0} caracteres")
+                print(
+                    f"  ⚠️  Texto extraído: {len(text) if text else 0} caracteres"
+                )
             return None, None
 
         # Extrae información del texto del PDF
@@ -593,7 +628,8 @@ class PDFProcessor:
         doc_type = self.detect_document_type(text)
         exam_type = self.extract_exam_type(text)
 
-        # Si no se encontró información en el texto, usa datos del nombre del archivo como fallback
+        # Si no se encontró información en el texto, usa datos del nombre del archivo
+        # como fallback
         if not date and filename_data.get("date"):
             date = filename_data["date"]
         if not number and filename_data.get("dni"):
@@ -650,7 +686,8 @@ class PDFProcessor:
             if len(entity_words) >= 2:
                 # Si tiene 2-4 palabras y son mayúsculas, probablemente es nombre de persona
                 if all(
-                    word[0].isupper() if word else False for word in entity_words[:3]
+                    word[0].isupper() if word else False
+                    for word in entity_words[:3]
                 ):
                     person_name = entity
 
@@ -681,7 +718,9 @@ class PDFProcessor:
 
         if company_name:
             # Limpia y normaliza la empresa
-            company_clean = "_".join(company_name.split()[:4])  # Máximo 4 palabras
+            company_clean = "_".join(
+                company_name.split()[:4]
+            )  # Máximo 4 palabras
             company_clean = re.sub(r'[<>:"/\\|?*&]', "", company_clean)
             parts.append(company_clean)
             metadata["empresa"] = company_name
@@ -732,7 +771,9 @@ class PDFProcessor:
             except:
                 pass
         elif filename_data.get("date"):
-            date_clean = filename_data["date"].replace(".", "-").replace("/", "-")
+            date_clean = (
+                filename_data["date"].replace(".", "-").replace("/", "-")
+            )
             parts.append(date_clean)
             metadata["fecha"] = filename_data["date"]
             if verbose:

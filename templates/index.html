@@ -4,21 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF Name Setter - Renombrador Inteligente de PDFs</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ range(1,99999) | random }}">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>📄 PDF Name Setter</h1>
-            <p class="subtitle">Renombrador Inteligente de PDFs basado en contenido</p>
-        </header>
 
+        <input type="file" id="fileInput" multiple accept=".pdf,application/pdf" style="display:none">
         <div class="upload-area" id="uploadArea">
-            <div class="upload-content">
-                <div class="upload-icon">📎</div>
+            <div class="upload-label">
+                <span class="upload-icon">📎</span>
                 <h2>Arrastra y suelta tus PDFs aquí</h2>
                 <p>o haz clic para seleccionar archivos</p>
-                <input type="file" id="fileInput" multiple accept=".pdf" hidden>
             </div>
         </div>
 
@@ -43,6 +39,59 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ range(1,99999) | random }}"></script>
+    <script>
+    (function() {
+        var fileInput = document.getElementById('fileInput');
+        var uploadArea = document.getElementById('uploadArea');
+        if (!fileInput || !uploadArea) return;
+
+        // Click on upload area opens file picker
+        uploadArea.addEventListener('click', function() {
+            fileInput.click();
+        });
+
+        // File picker selection
+        fileInput.addEventListener('change', function() {
+            var files = fileInput.files;
+            if (files && files.length && typeof handleFiles === 'function') {
+                handleFiles(Array.from(files));
+            }
+            fileInput.value = '';
+        });
+
+        // Drag & drop on upload area
+        uploadArea.addEventListener('dragenter', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('dragover');
+            var list = e.dataTransfer.files;
+            if (!list || !list.length) return;
+            if (typeof handleFiles === 'function') handleFiles(Array.from(list));
+        });
+
+        // Prevent browser from opening dropped files
+        document.addEventListener('dragover', function(e) { e.preventDefault(); });
+        document.addEventListener('drop', function(e) { e.preventDefault(); });
+    })();
+    </script>
 </body>
 </html>

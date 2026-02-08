@@ -38,6 +38,7 @@ header h1 {
 }
 
 .upload-area {
+    position: relative;
     border: 3px dashed #078080;
     border-radius: 15px;
     padding: 60px 20px;
@@ -60,7 +61,7 @@ header h1 {
     transform: scale(1.02);
 }
 
-.upload-content {
+.upload-label {
     pointer-events: none;
 }
 
@@ -367,7 +368,16 @@ header h1 {
 .preview-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
     margin-top: 10px;
+}
+
+.download-all-wrap {
+    margin-top: 20px;
+    padding: 16px;
+    background: #f8f5f2;
+    border-radius: 12px;
+    text-align: center;
 }
 
 .btn-small {

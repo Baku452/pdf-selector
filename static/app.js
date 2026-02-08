@@ -1,43 +1,30 @@
 // File handling
 let selectedFiles = [];
 
-const uploadArea = document.getElementById('uploadArea');
-const fileInput = document.getElementById('fileInput');
-const fileList = document.getElementById('fileList');
-const fileListItems = document.getElementById('fileListItems');
-const processBtn = document.getElementById('processBtn');
-const clearBtn = document.getElementById('clearBtn');
-const results = document.getElementById('results');
-const resultsContent = document.getElementById('resultsContent');
+let uploadArea, fileInput, fileList, fileListItems, processBtn, clearBtn, results, resultsContent;
 
-// Click to select files
-uploadArea.addEventListener('click', () => {
-    fileInput.click();
-});
+function initUpload() {
+    uploadArea = document.getElementById('uploadArea');
+    fileInput = document.getElementById('fileInput');
+    fileList = document.getElementById('fileList');
+    fileListItems = document.getElementById('fileListItems');
+    processBtn = document.getElementById('processBtn');
+    clearBtn = document.getElementById('clearBtn');
+    results = document.getElementById('results');
+    resultsContent = document.getElementById('resultsContent');
 
-// File input change
-fileInput.addEventListener('change', (e) => {
-    handleFiles(Array.from(e.target.files));
-});
+    // La zona de subida (clic, cambio, drag) se configura en el script inline del HTML
+    if (!processBtn || !clearBtn) return;
 
-// Drag and drop
-uploadArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadArea.classList.add('dragover');
-});
+    processBtn.addEventListener('click', onProcessClick);
+    clearBtn.addEventListener('click', onClearClick);
+}
 
-uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
-});
-
-uploadArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove('dragover');
-    const files = Array.from(e.dataTransfer.files).filter(file => 
-        file.type === 'application/pdf'
-    );
-    handleFiles(files);
-});
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initUpload);
+} else {
+    initUpload();
+}
 
 function handleFiles(files) {
     // Filter only PDFs
@@ -129,52 +116,40 @@ function buildFinalFilename(fields, include, order) {
     return base ? `${base}.pdf` : '';
 }
 
-// Process button
-processBtn.addEventListener('click', async () => {
+function onProcessClick() {
     if (selectedFiles.length === 0) return;
-
-    // Show loading state
     processBtn.disabled = true;
-    processBtn.querySelector('.btn-text').textContent = 'Procesando...';
-    processBtn.querySelector('.btn-loader').style.display = 'inline-block';
-    results.style.display = 'none';
+    if (processBtn.querySelector('.btn-text')) processBtn.querySelector('.btn-text').textContent = 'Procesando...';
+    if (processBtn.querySelector('.btn-loader')) processBtn.querySelector('.btn-loader').style.display = 'inline-block';
+    if (results) results.style.display = 'none';
 
-    try {
-        const formData = new FormData();
-        selectedFiles.forEach(file => {
-            formData.append('files', file);
+    var formData = new FormData();
+    selectedFiles.forEach(function (file) { formData.append('files', file); });
+
+    fetch('/api/upload', { method: 'POST', body: formData })
+        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+        .then(function (_) {
+            var ok = _.ok, data = _.data;
+            if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
+            displayResults(data.results, data.session_id);
+        })
+        .catch(function (err) { alert('Error: ' + (err.message || err)); })
+        .finally(function () {
+            processBtn.disabled = false;
+            if (processBtn.querySelector('.btn-text')) processBtn.querySelector('.btn-text').textContent = 'Procesar PDFs';
+            if (processBtn.querySelector('.btn-loader')) processBtn.querySelector('.btn-loader').style.display = 'none';
         });
+}
 
-        const response = await fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || 'Error al procesar los archivos');
-        }
-
-        displayResults(data.results);
-
-    } catch (error) {
-        alert('Error: ' + error.message);
-    } finally {
-        // Reset button state
-        processBtn.disabled = false;
-        processBtn.querySelector('.btn-text').textContent = 'Procesar PDFs';
-        processBtn.querySelector('.btn-loader').style.display = 'none';
-    }
-});
-
-function displayResults(resultsData) {
+function displayResults(resultsData, sessionId) {
     results.style.display = 'block';
     resultsContent.innerHTML = '';
+    resultsContent.dataset.sessionId = sessionId || '';
 
     resultsData.forEach(result => {
         const div = document.createElement('div');
         div.className = 'result-item';
+        if (result.file_index != null) div.dataset.fileIndex = String(result.file_index);
 
         // Hard error (exception)
         if (result.error) {
@@ -237,6 +212,7 @@ function displayResults(resultsData) {
                 <div class="result-suggested" data-role="preview"></div>
                 <div class="preview-actions">
                     <button class="btn btn-secondary btn-small" data-action="copy">Copiar</button>
+                    ${result.file_index != null ? `<button class="btn btn-primary btn-small" data-action="download-one">Descargar PDF</button>` : ''}
                 </div>
             </div>
         `;
@@ -326,8 +302,71 @@ function displayResults(resultsData) {
             }
         });
 
+        // download this PDF with chosen name
+        const downloadOneBtn = div.querySelector('[data-action="download-one"]');
+        if (downloadOneBtn) {
+            downloadOneBtn.addEventListener('click', () => {
+                const preview = div.querySelector('[data-role="preview"]').textContent || '';
+                if (!preview || preview.startsWith('(')) return;
+                const sid = resultsContent.dataset.sessionId;
+                const idx = div.dataset.fileIndex;
+                if (!sid || idx == null) return;
+                const url = `/api/download/${sid}/${idx}?filename=${encodeURIComponent(preview)}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = preview;
+                a.rel = 'noopener';
+                a.click();
+            });
+        }
+
         updatePreview();
     });
+
+    // "Descargar todos (ZIP)" button
+    const zipSessionId = resultsContent.dataset.sessionId;
+    const downloadables = Array.from(resultsContent.querySelectorAll('[data-file-index]'));
+    if (zipSessionId && downloadables.length > 0) {
+        const zipWrap = document.createElement('div');
+        zipWrap.className = 'download-all-wrap';
+        zipWrap.innerHTML = `
+            <button class="btn btn-primary" id="downloadAllZip" type="button">Descargar todos (ZIP)</button>
+        `;
+        resultsContent.appendChild(zipWrap);
+
+        document.getElementById('downloadAllZip').addEventListener('click', async () => {
+            const files = [];
+            downloadables.forEach(card => {
+                const previewEl = card.querySelector('[data-role="preview"]');
+                const name = (previewEl && previewEl.textContent) ? previewEl.textContent.trim() : '';
+                if (name && !name.startsWith('(')) {
+                    files.push({ index: parseInt(card.dataset.fileIndex, 10), filename: name });
+                }
+            });
+            if (files.length === 0) {
+                alert('No hay nombres válidos para descargar. Completa al menos un nombre.');
+                return;
+            }
+            try {
+                const res = await fetch('/api/download-zip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: zipSessionId, files }),
+                });
+                if (!res.ok) throw new Error('Error al generar el ZIP');
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'PDFNameSetter_descargas.zip';
+                a.rel = 'noopener';
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Error: ' + (e.message || e));
+            }
+        });
+    }
 
     // Scroll to results
     results.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -457,10 +496,10 @@ function escapeHtml(str) {
 }
 
 // Clear button
-clearBtn.addEventListener('click', () => {
+function onClearClick() {
     selectedFiles = [];
-    fileInput.value = '';
+    if (fileInput) fileInput.value = '';
     updateFileList();
     updateButtons();
-    results.style.display = 'none';
-});
+    if (results) results.style.display = 'none';
+}
