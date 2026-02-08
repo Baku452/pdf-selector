@@ -6,8 +6,12 @@ Flask-based web app that allows users to upload PDFs and get suggested names
 
 import os
 import sys
+import shutil
+import zipfile
+import io
+import uuid
 from pathlib import Path
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
 from werkzeug.utils import secure_filename
 from pdf_processor import PDFProcessor
 
@@ -15,7 +19,8 @@ from pdf_processor import PDFProcessor
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
-UPLOAD_DIR = BASE_DIR / "uploads"
+# Use /tmp for uploads on Vercel (read-only filesystem), local dir otherwise
+UPLOAD_DIR = Path("/tmp/pdfns_uploads") if os.environ.get("VERCEL") else BASE_DIR / "uploads"
 
 app = Flask(
     __name__,
@@ -49,36 +54,57 @@ def index():
     return render_template('index.html')
 
 
+def _session_dir(session_id):
+    """Directory where this session's PDFs are stored."""
+    path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _safe_download_filename(name):
+    """Sanitize filename for Content-Disposition (evitar caracteres problemáticos)."""
+    if not name or not name.strip():
+        return "documento.pdf"
+    name = name.strip()
+    if not name.lower().endswith('.pdf'):
+        name = name + '.pdf'
+    return ''.join(c for c in name if c.isalnum() or c in ' ._-()').strip() or 'documento.pdf'
+
+
 @app.route('/api/upload', methods=['POST'])
 def upload_pdf():
-    """Handle PDF upload and return suggested names"""
+    """Handle PDF upload and return suggested names. Keeps files for download."""
     if 'files' not in request.files:
         return jsonify({'error': 'No files provided'}), 400
-    
+
     files = request.files.getlist('files')
-    
+
     if not files or files[0].filename == '':
         return jsonify({'error': 'No files selected'}), 400
-    
+
+    session_id = str(uuid.uuid4())
+    session_path = _session_dir(session_id)
     results = []
-    
+    file_index = 0
+
     for file in files:
         if not allowed_file(file.filename):
             results.append({
                 'original_name': file.filename,
                 'success': False,
-                'error': 'Invalid file type. Only PDF files are allowed.'
+                'error': 'Invalid file type. Only PDF files are allowed.',
+                'file_index': None,
             })
             continue
-        
+
         try:
-            # Save uploaded file temporarily
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            
+            # Save under session folder as 0.pdf, 1.pdf, ...
+            stem = str(file_index)
+            filepath = session_path / f"{stem}.pdf"
+            file.save(str(filepath))
+
             analysis = processor.analyze(
-                filepath,
+                str(filepath),
                 original_filename=file.filename,
                 verbose=False,
             )
@@ -91,30 +117,85 @@ def upload_pdf():
                 "defaults": analysis.get("defaults", {}),
                 "notes": analysis.get("notes", []),
                 "text_chars": analysis.get("text_chars", 0),
+                "file_index": file_index,
             }
-            
-            # Clean up temporary file
-            try:
-                os.remove(filepath)
-            except:
-                pass
-            
             results.append(result)
-            
+            file_index += 1
+
         except Exception as e:
             results.append({
                 'original_name': file.filename,
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'file_index': None,
             })
-    
-    return jsonify({'results': results})
+
+    return jsonify({'session_id': session_id, 'results': results})
 
 
-@app.route('/api/download/<filename>')
-def download_file(filename):
-    """Download a file (if needed for future features)"""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+@app.route('/api/download/<session_id>/<int:file_index>')
+def download_file(session_id, file_index):
+    """Download one PDF with the chosen filename (Content-Disposition)."""
+    filename = request.args.get('filename', '').strip()
+    filename = _safe_download_filename(filename)
+
+    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    path = session_path / f"{file_index}.pdf"
+    if not path.is_file():
+        return jsonify({'error': 'File not found or expired'}), 404
+
+    try:
+        return send_file(
+            path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/pdf',
+        )
+    finally:
+        try:
+            path.unlink()
+        except Exception:
+            pass
+
+
+@app.route('/api/download-zip', methods=['POST'])
+def download_zip():
+    """Download a ZIP with all PDFs renamed. Body: { session_id, files: [ { index, filename } ] }"""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'JSON body required'}), 400
+    session_id = data.get('session_id')
+    files = data.get('files')
+    if not session_id or not isinstance(files, list):
+        return jsonify({'error': 'session_id and files (array) required'}), 400
+
+    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    if not session_path.is_dir():
+        return jsonify({'error': 'Session not found or expired'}), 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for item in files:
+            idx = item.get('index')
+            name = _safe_download_filename(item.get('filename', ''))
+            if idx is None:
+                continue
+            path = session_path / f"{idx}.pdf"
+            if path.is_file():
+                zf.write(path, name)
+
+    buf.seek(0)
+    try:
+        shutil.rmtree(session_path, ignore_errors=True)
+    except Exception:
+        pass
+
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name='PDFNameSetter_descargas.zip',
+        mimetype='application/zip',
+    )
 
 
 if __name__ == '__main__':
