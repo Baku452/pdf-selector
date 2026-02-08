@@ -16,7 +16,7 @@ from werkzeug.utils import secure_filename
 from pdf_processor import PDFProcessor
 
 # PyInstaller compatibility: templates/static relative to bundle/extracted dir
-BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(os.path.abspath(__file__)).parent))
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 # Use /tmp for uploads on Vercel (read-only filesystem), local dir otherwise
@@ -26,6 +26,7 @@ app = Flask(
     __name__,
     template_folder=str(TEMPLATES_DIR),
     static_folder=str(STATIC_DIR),
+    static_url_path="/static",
 )
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
