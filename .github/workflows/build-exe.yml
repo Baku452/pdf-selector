@@ -1,0 +1,59 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Tesseract OCR
+        run: choco install tesseract --no-progress -y
+
+      - name: Install Poppler
+        run: |
+          choco install poppler --no-progress -y
+          # Find poppler bin path
+          $popplerBin = (Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler\tools\*\Library\bin" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $popplerBin) {
+            $popplerBin = "C:\ProgramData\chocolatey\bin"
+          }
+          echo "POPPLER_PATH=$popplerBin" >> $env:GITHUB_ENV
+
+      - name: Install Python dependencies
+        run: |
+          pip install pyinstaller
+          pip install Flask==3.0.0 werkzeug==3.0.1 PyMuPDF==1.23.8
+          pip install pytesseract pdf2image Pillow
+
+      - name: Set Tesseract path
+        run: |
+          $tesseractPath = "C:\Program Files\Tesseract-OCR"
+          echo "TESSERACT_PATH=$tesseractPath" >> $env:GITHUB_ENV
+
+      - name: Build EXE with PyInstaller
+        run: pyinstaller pdfnamesetter.spec --noconfirm
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFNameSetter-Windows
+          path: dist/PDFNameSetter.exe
+          retention-days: 30
+
+      - name: Create Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PDFNameSetter.exe
+          generate_release_notes: true

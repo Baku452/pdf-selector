@@ -4,6 +4,8 @@ Shared PDF Processing Logic
 Core functionality for extracting information from PDFs
 """
 
+import os
+import sys
 import re
 
 try:
@@ -17,6 +19,17 @@ try:
 except ImportError:
     pytesseract = None
     convert_from_path = None
+
+# Configure bundled Tesseract/Poppler paths when running from PyInstaller
+_BUNDLE_DIR = getattr(sys, '_MEIPASS', None)
+if _BUNDLE_DIR:
+    _tesseract_exe = os.path.join(_BUNDLE_DIR, 'tesseract', 'tesseract.exe')
+    if os.path.isfile(_tesseract_exe) and pytesseract:
+        pytesseract.pytesseract.tesseract_cmd = _tesseract_exe
+        os.environ['TESSDATA_PREFIX'] = os.path.join(_BUNDLE_DIR, 'tesseract', 'tessdata')
+    _poppler_dir = os.path.join(_BUNDLE_DIR, 'poppler')
+    if os.path.isdir(_poppler_dir):
+        os.environ['PATH'] = _poppler_dir + os.pathsep + os.environ.get('PATH', '')
 
 
 class PDFProcessor:
