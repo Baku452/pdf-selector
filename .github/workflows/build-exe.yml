@@ -34,7 +34,7 @@ jobs:
         run: |
           pip install pyinstaller
           pip install Flask==3.0.0 werkzeug==3.0.1 PyMuPDF==1.23.8
-          pip install pytesseract pdf2image Pillow
+          pip install pytesseract pdf2image Pillow pywebview
 
       - name: Set Tesseract path
         run: |

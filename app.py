@@ -11,7 +11,6 @@ import zipfile
 import io
 import uuid
 import threading
-import webbrowser
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
 from werkzeug.utils import secure_filename
@@ -201,13 +200,30 @@ def download_zip():
     )
 
 
+def start_server(port):
+    """Start Flask in a background thread (used by desktop mode)."""
+    app.run(debug=False, host='127.0.0.1', port=port, use_reloader=False)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    url = f"http://localhost:{port}"
     is_bundled = getattr(sys, 'frozen', False)
-    print(f"\n🌐 Servidor iniciado en {url}")
-    print("   Presiona Ctrl+C para detener el servidor\n")
-    # Auto-open browser when running as .exe
+
     if is_bundled:
-        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    app.run(debug=not is_bundled, host='127.0.0.1', port=port)
+        # Desktop mode: open native window with pywebview
+        import webview
+        t = threading.Thread(target=start_server, args=(port,), daemon=True)
+        t.start()
+        webview.create_window(
+            'PDFNameSetter',
+            f'http://localhost:{port}',
+            width=1100,
+            height=750,
+            min_size=(800, 500),
+        )
+        webview.start()
+    else:
+        # Dev mode: normal Flask server
+        print(f"\n🌐 Servidor iniciado en http://localhost:{port}")
+        print("   Presiona Ctrl+C para detener el servidor\n")
+        app.run(debug=True, host='127.0.0.1', port=port)
