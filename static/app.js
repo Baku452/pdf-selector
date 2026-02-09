@@ -127,7 +127,14 @@ function onProcessClick() {
     selectedFiles.forEach(function (file) { formData.append('files', file); });
 
     fetch('/api/upload', { method: 'POST', body: formData })
-        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+        .then(function (r) {
+            var contentType = r.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                if (r.status === 413) throw new Error('Archivo(s) demasiado grandes. Máximo 100MB.');
+                throw new Error('Error del servidor (' + r.status + '). Intenta de nuevo.');
+            }
+            return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+        })
         .then(function (_) {
             var ok = _.ok, data = _.data;
             if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
