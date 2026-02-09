@@ -214,21 +214,35 @@ class PDFProcessor:
         return None
 
     def extract_date_candidates(self, text: str):
-        """Devuelve lista de fechas (normalizadas) encontradas en el texto."""
+        """Devuelve lista de fechas (normalizadas) encontradas en el texto.
+        Prioritizes dates with labels like 'FECHA DE EXAMEN', 'FECHA DE EVALUACION'."""
         if not text:
             return []
-        date_patterns = [
+
+        date_re = r"(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})"
+
+        # 1. Try labeled dates first (highest priority)
+        labeled_patterns = [
+            r"(?:FECHA\s+DE\s+EVALUACI[OÓ]N|FECHA\s+DE\s+EXAMEN(?:\s+INICIAL)?|F\.\s*DE\s+EXAMEN|FECHA\s+EXAMEN|FECHA\s+DE\s+ATENCI[OÓ]N)\s*[:\-]?\s*" + date_re,
+        ]
+        labeled_dates = []
+        for pat in labeled_patterns:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+                labeled_dates.append(self._normalize_date(m.group(1)))
+
+        # 2. All dates as fallback
+        all_date_patterns = [
             r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",
             r"\d{1,2}\.\d{1,2}\.\d{2,4}",
             r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
-            r"\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}",
         ]
-        found = []
-        for pattern in date_patterns:
-            found.extend(re.findall(pattern, text, flags=re.IGNORECASE))
-        return self._dedupe_keep_order(
-            [self._normalize_date(d) for d in found]
-        )
+        all_dates = []
+        for pattern in all_date_patterns:
+            all_dates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+
+        # Labeled dates first, then all others
+        combined = labeled_dates + [self._normalize_date(d) for d in all_dates]
+        return self._dedupe_keep_order(combined)
 
     def extract_dni_candidates(self, text: str):
         """Devuelve lista de posibles DNI (8 dígitos) encontrados en el texto."""
@@ -249,16 +263,50 @@ class PDFProcessor:
         if not text:
             return []
         upper = text.upper()
+        # Normalize hyphenated variants for matching
+        normalized = upper.replace("PRE-OCUPACIONAL", "PREOCUPACIONAL") \
+                         .replace("POST-OCUPACIONAL", "POSTOCUPACIONAL") \
+                         .replace("PRE OCUPACIONAL", "PREOCUPACIONAL") \
+                         .replace("POST OCUPACIONAL", "POSTOCUPACIONAL")
         exam_types = [
+            "PREOCUPACIONAL",
+            "POSTOCUPACIONAL",
             "PERIODICO",
             "INGRESO",
             "EGRESO",
             "RETIRO",
-            "PREOCUPACIONAL",
-            "POSTOCUPACIONAL",
         ]
-        found = [t for t in exam_types if t in upper]
+        found = [t for t in exam_types if t in normalized]
         return self._dedupe_keep_order(found)
+
+    # Words that should not appear in a person's name (noise from OCR)
+    _NAME_NOISE_WORDS = {
+        "AREA", "DNI", "CARGO", "PUESTO", "FECHA", "EMPRESA", "RUC",
+        "TELEFONO", "CELULAR", "CORREO", "EMAIL", "DIRECCION",
+        "DISTRITO", "PROVINCIA", "DEPARTAMENTO", "PERU", "LIMA",
+        "CARNET", "EXTRANJERIA", "DOCUMENTO", "IDENTIDAD",
+        "TRABAJADOR", "PACIENTE", "EVALUADO", "EXAMINADO",
+        "CONTRATA", "CONTRATISTA", "SAC", "SRL", "EIRL",
+        "OCUPACIONAL", "MEDICO", "EXAMEN", "RESULTADO",
+        "INGRESO", "EGRESO", "PERIODICO", "PREOCUPACIONAL",
+    }
+
+    def _clean_person_name(self, raw: str) -> str:
+        """Clean a raw person name: remove noise words, limit to 3 words."""
+        words = self._clean_spaces(raw).split()
+        clean = []
+        for w in words:
+            w_upper = w.upper().strip(".,;:()")
+            if w_upper in self._NAME_NOISE_WORDS:
+                break  # stop at first noise word
+            if len(w_upper) < 2:
+                continue
+            if w_upper.isdigit():
+                break
+            clean.append(w_upper)
+            if len(clean) >= 3:
+                break
+        return " ".join(clean)
 
     def extract_person_name_candidates(self, text: str):
         """Devuelve lista de posibles nombres de persona encontrados en el texto."""
@@ -267,23 +315,21 @@ class PDFProcessor:
         candidates = []
 
         labeled_patterns = [
-            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO|NOMBRE|NAME)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{10,80})",
+            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{5,80})",
         ]
         for pat in labeled_patterns:
             for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                raw = self._clean_spaces(m.group(1))
-                # corta al primer salto de línea largo si vino muy "ensuciado"
-                raw = raw.split("\n", 1)[0].strip()
-                raw = self._clean_spaces(raw)
-                if len(raw.split()) >= 2:
-                    candidates.append(raw)
+                raw = m.group(1).split("\n", 1)[0].strip()
+                cleaned = self._clean_person_name(raw)
+                if len(cleaned.split()) >= 2:
+                    candidates.append(cleaned)
 
-        # Heurística: 3+ palabras mayúsculas (típico en reportes)
+        # Heurística: 3 palabras mayúsculas consecutivas (típico en reportes)
         for m in re.finditer(
             r"\b([A-ZÁÉÍÓÚÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚÑ]{2,25}){2,4})\b", text
         ):
             raw = self._clean_spaces(m.group(1))
-            # evita “CONSORCIO ...” como nombre de persona
+            # evita empresas u otros
             if any(
                 k in raw.upper()
                 for k in [
@@ -294,12 +340,31 @@ class PDFProcessor:
                     "S.A",
                     "S.A.C",
                     "S.R.L",
+                    "CENTRO",
+                    "MEDICO",
                 ]
             ):
                 continue
-            candidates.append(raw)
+            cleaned = self._clean_person_name(raw)
+            if len(cleaned.split()) >= 2:
+                candidates.append(cleaned)
 
         return self._dedupe_keep_order(candidates)
+
+    # Suffixes to strip from company names for cleaner output
+    _COMPANY_STRIP_SUFFIXES = {"SAC", "S.A.C", "S.A.C.", "SRL", "S.R.L", "S.R.L.", "EIRL", "S.A", "S.A."}
+
+    def _clean_company_name(self, raw: str) -> str:
+        """Clean company name: strip legal suffixes, limit words."""
+        words = self._clean_spaces(raw).split()
+        # Remove trailing legal suffixes
+        while words and words[-1].upper().replace(".", "") in {
+            s.replace(".", "") for s in self._COMPANY_STRIP_SUFFIXES
+        }:
+            words.pop()
+        # Limit to 4 words
+        words = words[:4]
+        return " ".join(words)
 
     def extract_company_candidates(self, text: str):
         """Devuelve lista de posibles empresas encontradas en el texto."""
@@ -308,15 +373,15 @@ class PDFProcessor:
         candidates = []
 
         labeled_patterns = [
-            r"(?:EMPRESA|RAZON\s+SOCIAL|RAZÓN\s+SOCIAL|CONTRATISTA|CLIENTE|COMPAÑIA|COMPAÑÍA|COMPANIA|COMPANY)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑ0-9a-záéíóúñ&\s]{5,120})",
+            # Handle separators like "EMPRESA / CONTRATA | SINAR PERU"
+            r"(?:EMPRESA|RAZON\s+SOCIAL|RAZÓN\s+SOCIAL|CONTRATISTA|CLIENTE|COMPAÑIA|COMPAÑÍA|COMPANIA|COMPANY)(?:\s*[/]\s*\w+)*\s*[:\-|]?\s*([A-ZÁÉÍÓÚÑ0-9a-záéíóúñ&\s.]{3,120})",
         ]
         for pat in labeled_patterns:
             for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                raw = self._clean_spaces(m.group(1))
-                raw = raw.split("\n", 1)[0].strip()
-                raw = self._clean_spaces(raw)
-                if len(raw) >= 5:
-                    candidates.append(raw)
+                raw = m.group(1).split("\n", 1)[0].strip()
+                cleaned = self._clean_company_name(raw)
+                if len(cleaned) >= 3:
+                    candidates.append(cleaned)
 
         # Heurística: líneas con CONSORCIO
         for line in text.split("\n")[:80]:
@@ -324,7 +389,9 @@ class PDFProcessor:
             if not l:
                 continue
             if "CONSORCIO" in l.upper():
-                candidates.append(l)
+                cleaned = self._clean_company_name(l)
+                if cleaned:
+                    candidates.append(cleaned)
 
         return self._dedupe_keep_order(candidates)
 
