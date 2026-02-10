@@ -84,35 +84,47 @@ function sanitizePart(value) {
         .replace(/^_+|_+$/g, '');
 }
 
-function normalizeDate(value) {
+const EXAM_TYPE_ABBR = {
+    'PREOCUPACIONAL': 'EMPO',
+    'PERIODICO': 'EMOA',
+    'POSTOCUPACIONAL': 'EMOR',
+    'INGRESO': 'INGRESO',
+    'EGRESO': 'EGRESO',
+    'RETIRO': 'RETIRO',
+};
+
+function dateToShort(value) {
     if (!value) return '';
-    return String(value).trim().replace(/[./]/g, '-').replace(/-+/g, '-');
+    const cleaned = String(value).trim().replace(/[./]/g, '-');
+    const parts = cleaned.split('-');
+    if (parts.length !== 3) return cleaned.replace(/-/g, '.');
+    let [dd, mm, yy] = parts;
+    if (yy.length === 4) yy = yy.slice(2);
+    return `${dd}.${mm}.${yy}`;
 }
 
-function buildFinalFilename(fields, include, order) {
-    const dni = sanitizePart(fields.dni);
-    const nombre = sanitizePart(fields.nombre);
-    const empresa = sanitizePart(fields.empresa);
-    const tipo = sanitizePart((fields.tipo_examen || '').toUpperCase());
-    const fecha = sanitizePart(normalizeDate(fields.fecha));
+function buildFinalFilename(fields, include) {
+    const dni = (fields.dni || '').trim();
+    const nombre = (fields.nombre || '').trim().toUpperCase();
+    const empresa = (fields.empresa || '').trim().toUpperCase();
+    const tipoRaw = (fields.tipo_examen || '').trim().toUpperCase();
+    const tipoAbbr = EXAM_TYPE_ABBR[tipoRaw] || tipoRaw;
+    const fecha = dateToShort(fields.fecha);
 
-    const values = { dni, nombre, empresa, tipo_examen: tipo, fecha };
+    // Format: FECHA TIPO DNI NOMBRE-EMPRESA.pdf
     const parts = [];
-    const ord = Array.isArray(order) && order.length
-        ? order
-        : ['dni', 'nombre', 'empresa', 'tipo_examen', 'centro', 'fecha'];
+    if (include.fecha && fecha) parts.push(fecha);
+    if (include.tipo_examen && tipoAbbr) parts.push(tipoAbbr);
+    if (include.dni && dni) parts.push(dni);
 
-    for (const key of ord) {
-        if (key === 'centro') {
-            parts.push('CMESPINAR');
-            continue;
-        }
-        if (!include[key]) continue;
-        const v = values[key];
-        if (v) parts.push(v);
+    let nameEmpresa = '';
+    if (include.nombre && nombre) nameEmpresa = nombre;
+    if (include.empresa && empresa) {
+        nameEmpresa = nameEmpresa ? nameEmpresa + '-' + empresa : empresa;
     }
+    if (nameEmpresa) parts.push(nameEmpresa);
 
-    const base = parts.filter(Boolean).join('_').replace(/_+/g, '_');
+    const base = parts.filter(Boolean).join(' ').replace(/[<>:"/\\|?*]/g, '');
     return base ? `${base}.pdf` : '';
 }
 
@@ -202,15 +214,14 @@ function displayResults(resultsData, sessionId) {
             </div>
 
             <div class="order-block">
-                <div class="order-label">Orden del nombre</div>
-                <div class="order-help">Arrastra y suelta para reordenar (por PDF). Puedes desactivar campos opcionales.</div>
+                <div class="order-label">Campos incluidos</div>
+                <div class="order-help">Activa o desactiva campos opcionales. Formato: FECHA TIPO DNI NOMBRE-EMPRESA</div>
                 <div class="order-list" data-role="order-list">
+                    ${renderOrderItem('fecha', 'Fecha', true, false)}
+                    ${renderOrderItem('tipo_examen', 'Tipo de examen', true, false)}
                     ${renderOrderItem('dni', 'DNI', true, true)}
                     ${renderOrderItem('nombre', 'Nombre', true, false)}
                     ${renderOrderItem('empresa', 'Empresa', true, false)}
-                    ${renderOrderItem('tipo_examen', 'Tipo de examen', true, false)}
-                    ${renderOrderItem('centro', 'CMESPINAR', true, true)}
-                    ${renderOrderItem('fecha', 'Fecha', true, false)}
                 </div>
             </div>
 
@@ -233,7 +244,6 @@ function displayResults(resultsData, sessionId) {
             empresa: true,
             tipo_examen: true,
             fecha: true,
-            centro: true,
         };
 
         const getFields = () => ({
@@ -246,7 +256,7 @@ function displayResults(resultsData, sessionId) {
 
         const getOrder = () => {
             const list = div.querySelector('[data-role="order-list"]');
-            if (!list) return ['dni', 'nombre', 'empresa', 'tipo_examen', 'centro', 'fecha'];
+            if (!list) return ['fecha', 'tipo_examen', 'dni', 'nombre', 'empresa'];
             return Array.from(list.children)
                 .map(el => el.getAttribute('data-order-field'))
                 .filter(Boolean);
@@ -257,17 +267,15 @@ function displayResults(resultsData, sessionId) {
                 const field = chk.getAttribute('data-include-field');
                 include[field] = chk.checked;
             });
-            // fijos
+            // fijo
             include.dni = true;
-            include.centro = true;
         };
 
         const updatePreview = () => {
             const previewEl = div.querySelector('[data-role="preview"]');
             const fields = getFields();
             syncIncludeFromUI();
-            const order = getOrder();
-            const name = buildFinalFilename(fields, include, order);
+            const name = buildFinalFilename(fields, include);
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
         };
 
@@ -416,7 +424,7 @@ function renderOrderItem(field, label, checked, locked) {
     const isLocked = Boolean(locked);
     const isChecked = Boolean(checked);
     const disabled = isLocked ? 'disabled' : '';
-    const forced = field === 'dni' || field === 'centro';
+    const forced = field === 'dni';
     const checkbox = forced
         ? `<input type="checkbox" checked disabled aria-label="Incluir ${escapeHtml(label)}" />`
         : `<input type="checkbox" ${isChecked ? 'checked' : ''} ${disabled} data-include-field="${field}" aria-label="Incluir ${escapeHtml(label)}" />`;

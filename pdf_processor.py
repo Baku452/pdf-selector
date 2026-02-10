@@ -305,7 +305,7 @@ class PDFProcessor:
     }
 
     def _clean_person_name(self, raw: str) -> str:
-        """Clean a raw person name: remove noise words, limit to 3 words."""
+        """Clean a raw person name: remove noise words, limit to 4 words."""
         words = self._clean_spaces(raw).split()
         clean = []
         for w in words:
@@ -317,7 +317,7 @@ class PDFProcessor:
             if w_upper.isdigit():
                 break
             clean.append(w_upper)
-            if len(clean) >= 3:
+            if len(clean) >= 4:
                 break
         return " ".join(clean)
 
@@ -364,19 +364,16 @@ class PDFProcessor:
 
         return self._dedupe_keep_order(candidates)
 
-    # Suffixes to strip from company names for cleaner output
-    _COMPANY_STRIP_SUFFIXES = {"SAC", "S.A.C", "S.A.C.", "SRL", "S.R.L", "S.R.L.", "EIRL", "S.A", "S.A."}
-
     def _clean_company_name(self, raw: str) -> str:
-        """Clean company name: strip legal suffixes, limit words."""
-        words = self._clean_spaces(raw).split()
-        # Remove trailing legal suffixes
-        while words and words[-1].upper().replace(".", "") in {
-            s.replace(".", "") for s in self._COMPANY_STRIP_SUFFIXES
-        }:
-            words.pop()
-        # Limit to 4 words
-        words = words[:4]
+        """Clean company name: keep legal suffixes, limit to 5 words, filter OCR noise."""
+        raw = self._clean_spaces(raw)
+        # Reject if mostly lowercase (OCR garbage like "contiene informacién...")
+        words = raw.split()
+        upper_count = sum(1 for w in words if w[0].isupper() if w)
+        if len(words) > 3 and upper_count < len(words) * 0.5:
+            return ""
+        # Limit to 5 words
+        words = words[:5]
         return " ".join(words)
 
     def extract_company_candidates(self, text: str):
@@ -408,6 +405,30 @@ class PDFProcessor:
 
         return self._dedupe_keep_order(candidates)
 
+    # Map full exam type names to abbreviations
+    _EXAM_TYPE_ABBR = {
+        "PREOCUPACIONAL": "EMPO",
+        "PERIODICO": "EMOA",
+        "POSTOCUPACIONAL": "EMOR",
+        "INGRESO": "INGRESO",
+        "EGRESO": "EGRESO",
+        "RETIRO": "RETIRO",
+    }
+
+    @staticmethod
+    def _date_to_short(date_str: str) -> str:
+        """Convert normalized date (DD-MM-YYYY) to short format (DD.MM.YY)."""
+        if not date_str:
+            return ""
+        parts = date_str.replace("/", "-").replace(".", "-").split("-")
+        if len(parts) != 3:
+            return date_str.replace("-", ".")
+        dd, mm, yy = parts[0], parts[1], parts[2]
+        # Shorten year to 2 digits if 4 digits
+        if len(yy) == 4:
+            yy = yy[2:]
+        return f"{dd}.{mm}.{yy}"
+
     def build_filename(
         self,
         dni="",
@@ -418,11 +439,11 @@ class PDFProcessor:
         include=None,
     ):
         """
-        Construye el nombre final usando el orden requerido:
-        DNI, NOMBRE, EMPRESA, TIPO_EXAMEN, CMESPINAR, FECHA
+        Construye el nombre final con formato:
+        FECHA TIPO DNI NOMBRE-EMPRESA.pdf
+        Ejemplo: 31.01.26 EMPO 76248882 HUAMAN POCCO JESUS YOVANI-G4S PERU SAC.pdf
         """
         include = include or {}
-        parts = []
 
         def use(field, value):
             if field in include:
@@ -430,30 +451,37 @@ class PDFProcessor:
             return True
 
         dni = self._clean_spaces(dni)
-        nombre = self._clean_spaces(nombre)
-        empresa = self._clean_spaces(empresa)
+        nombre = self._clean_spaces(nombre).upper()
+        empresa = self._clean_spaces(empresa).upper()
         tipo_examen = self._clean_spaces(tipo_examen).upper()
         fecha = self._normalize_date(fecha)
 
-        if use("dni", dni) and dni:
-            parts.append(dni)
-        if use("nombre", nombre) and nombre:
-            parts.append("_".join(nombre.split()))
-        if use("empresa", empresa) and empresa:
-            parts.append("_".join(empresa.split()))
-        if use("tipo_examen", tipo_examen) and tipo_examen:
-            parts.append(tipo_examen)
+        # Abbreviate exam type
+        tipo_abbr = self._EXAM_TYPE_ABBR.get(tipo_examen, tipo_examen)
 
-        # Constante siempre presente
-        parts.append("CMESPINAR")
+        parts = []
 
         if use("fecha", fecha) and fecha:
-            parts.append(fecha)
+            parts.append(self._date_to_short(fecha))
+        if use("tipo_examen", tipo_abbr) and tipo_abbr:
+            parts.append(tipo_abbr)
+        if use("dni", dni) and dni:
+            parts.append(dni)
 
-        new_name = "_".join([p for p in parts if p])
+        # Nombre and empresa joined with hyphen
+        name_empresa = ""
+        if use("nombre", nombre) and nombre:
+            name_empresa = nombre
+        if use("empresa", empresa) and empresa:
+            if name_empresa:
+                name_empresa += "-" + empresa
+            else:
+                name_empresa = empresa
+        if name_empresa:
+            parts.append(name_empresa)
+
+        new_name = " ".join([p for p in parts if p])
         new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
-        new_name = re.sub(r"\s+", "_", new_name)
-        new_name = re.sub(r"_+", "_", new_name).strip("_")
         return new_name + ".pdf" if new_name else ""
 
     def analyze(self, pdf_path, original_filename=None, verbose=False):
