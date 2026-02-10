@@ -53,33 +53,37 @@ http://localhost:5001
 
 ## Cómo mandar el .exe a otra persona para que lo pruebe
 
-1. **Generar el .exe (en Windows)**  
-   - En una PC con Windows, instala Python 3.x, Tesseract y Poppler (ver requisitos abajo).  
-   - En la carpeta del proyecto:
+1. **Generar el .exe (en Windows)**
+   - En una PC con Windows, instala Python 3.x, Tesseract y Poppler (ver requisitos abajo).
+   - En la carpeta del proyecto, ejecuta el script de build:
      ```bash
+     build_windows.bat
+     ```
+   - O manualmente:
+     ```bash
+     set TESSERACT_PATH=C:\Program Files\Tesseract-OCR
+     set POPPLER_PATH=C:\poppler\Library\bin
      pip install -r pdf-renamer-requirements.txt
-     pip install pyinstaller
-     pyinstaller --onefile --name PDFNameSetter --add-data "templates;templates" --add-data "static;static" run_web.py
+     pip install pyinstaller pywebview
+     pyinstaller pdfnamesetter.spec
      ```
    - El ejecutable queda en `dist\PDFNameSetter.exe`.
 
-2. **Qué enviar**  
-   - Envía el archivo **`PDFNameSetter.exe`** (carpeta `dist\`).  
-   - La otra persona no necesita tener Python ni el código.
+2. **Qué enviar**
+   - Envía el archivo **`PDFNameSetter.exe`** (carpeta `dist\`).
+   - **IMPORTANTE**: Con el nuevo método de build, Tesseract y Poppler están incluidos dentro del .exe.
+   - La otra persona **NO necesita** tener Python, Tesseract o Poppler instalados.
 
-3. **Requisitos en la PC de la otra persona**  
-   - **Windows** (mismo tipo de arquitectura: 64 bits si compilaste en 64 bits).  
-   - **Tesseract OCR** instalado y en el PATH (para OCR en PDFs escaneados).  
-     - Descarga: [Tesseract en GitHub](https://github.com/UB-Mannheim/tesseract/wiki).  
-   - **Poppler** (para `pdf2image`): añadir la carpeta `bin` de Poppler al PATH.  
-     - Sin Tesseract/Poppler la app puede seguir funcionando para PDFs con texto digital; el OCR fallará en escaneados.
+3. **Requisitos en la PC de la otra persona**
+   - **Windows** (mismo tipo de arquitectura: 64 bits si compilaste en 64 bits).
+   - **Nada más** - todas las dependencias están incluidas en el .exe.
 
-4. **Cómo probar**  
-   - Doble clic en `PDFNameSetter.exe`.  
-   - Se abre el navegador en `http://127.0.0.1:5001`.  
+4. **Cómo probar**
+   - Doble clic en `PDFNameSetter.exe`.
+   - Se abre una ventana de la aplicación automáticamente.
    - Sube PDFs, ajusta nombres y usa **Descargar PDF** o **Descargar todos (ZIP)**.
 
-5. **Antivirus**  
+5. **Antivirus**
    - Algunos antivirus marcan .exe empaquetados con PyInstaller. Si es tu build, puedes añadir una excepción o firmar el ejecutable.
 
 ---
@@ -100,18 +104,34 @@ Yes — you can distribute this as a Windows executable that starts the local we
 
 ### Build steps
 
-```bash
-pip install -r pdf-renamer-requirements.txt
-pip install pyinstaller
+**IMPORTANT**: For OCR to work in the bundled .exe, you MUST set the paths to Tesseract and Poppler before building:
 
-pyinstaller --onefile --name PDFNameSetter ^
-  --add-data "templates;templates" ^
-  --add-data "static;static" ^
-  run_web.py
+```bash
+# Install Python dependencies
+pip install -r pdf-renamer-requirements.txt
+pip install pyinstaller pywebview
+
+# Set environment variables to point to your Tesseract and Poppler installations
+# Default paths (adjust if your installations are in different locations):
+set TESSERACT_PATH=C:\Program Files\Tesseract-OCR
+set POPPLER_PATH=C:\poppler\Library\bin
+
+# Build using the spec file (this will bundle Tesseract and Poppler)
+pyinstaller pdfnamesetter.spec
 ```
+
+The spec file will automatically bundle:
+- Tesseract executables and DLLs
+- Spanish and English language files (tessdata)
+- Poppler executables and DLLs
 
 Then run:
 - `dist\\PDFNameSetter.exe`
+
+**Troubleshooting**:
+- If OCR doesn't work, check that Tesseract and Poppler paths are correct before building
+- On the target machine, the .exe should work standalone without any system dependencies
+- If you see "[WARNING] Tesseract not found" messages, rebuild with correct paths
 
 ---
 

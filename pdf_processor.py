@@ -22,14 +22,27 @@ except ImportError:
 
 # Configure bundled Tesseract/Poppler paths when running from PyInstaller
 _BUNDLE_DIR = getattr(sys, '_MEIPASS', None)
+_TESSERACT_AVAILABLE = False
+
 if _BUNDLE_DIR:
     _tesseract_exe = os.path.join(_BUNDLE_DIR, 'tesseract', 'tesseract.exe')
     if os.path.isfile(_tesseract_exe) and pytesseract:
         pytesseract.pytesseract.tesseract_cmd = _tesseract_exe
         os.environ['TESSDATA_PREFIX'] = os.path.join(_BUNDLE_DIR, 'tesseract', 'tessdata')
+        _TESSERACT_AVAILABLE = True
+        print(f"[DEBUG] Tesseract configured at: {_tesseract_exe}")
+    else:
+        print(f"[WARNING] Tesseract not found at: {_tesseract_exe}")
+
     _poppler_dir = os.path.join(_BUNDLE_DIR, 'poppler')
     if os.path.isdir(_poppler_dir):
         os.environ['PATH'] = _poppler_dir + os.pathsep + os.environ.get('PATH', '')
+        print(f"[DEBUG] Poppler configured at: {_poppler_dir}")
+    else:
+        print(f"[WARNING] Poppler directory not found at: {_poppler_dir}")
+elif pytesseract:
+    # Not bundled - check if Tesseract is available in PATH
+    _TESSERACT_AVAILABLE = True
 
 
 class PDFProcessor:
@@ -89,14 +102,24 @@ class PDFProcessor:
             if verbose:
                 print(f"  🔍 Aplicando OCR (documento escaneado)...")
             try:
+                # First, try to convert PDF to images (requires Poppler)
                 images = convert_from_path(
                     pdf_path, first_page=1, last_page=3
                 )  # Solo primeras 3 páginas
-                for image in images:
-                    text += pytesseract.image_to_string(image, lang="spa+eng")
+                if verbose:
+                    print(f"  ✓ PDF convertido a {len(images)} imágenes")
+
+                # Then apply OCR to each image (requires Tesseract)
+                for i, image in enumerate(images):
+                    ocr_text = pytesseract.image_to_string(image, lang="spa+eng")
+                    text += ocr_text
+                    if verbose:
+                        print(f"  ✓ OCR página {i+1}: {len(ocr_text)} caracteres extraídos")
             except Exception as e:
                 if verbose:
-                    print(f"  ❌ Error en OCR: {e}")
+                    print(f"  ❌ Error en OCR: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 return ""
 
         return text
@@ -488,6 +511,10 @@ class PDFProcessor:
         """
         Analiza un PDF y devuelve candidatos + valores por defecto para armar el nombre en UI.
         """
+        if verbose:
+            ocr_status = "disponible" if (pytesseract and convert_from_path) else "NO disponible"
+            print(f"  ℹ️  OCR {ocr_status}")
+
         text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
         filename_data = (
             self.extract_from_filename(original_filename)

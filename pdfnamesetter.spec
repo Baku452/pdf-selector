@@ -13,11 +13,11 @@ tessdata_path = os.path.join(tesseract_path, 'tessdata')
 extra_binaries = []
 extra_datas = []
 
-# Bundle Tesseract
+# Bundle Tesseract (exe and all DLL dependencies)
 if os.path.isdir(tesseract_path):
     for f in os.listdir(tesseract_path):
         fp = os.path.join(tesseract_path, f)
-        if os.path.isfile(fp):
+        if os.path.isfile(fp) and (f.endswith('.exe') or f.endswith('.dll')):
             extra_binaries.append((fp, 'tesseract'))
 
 # Bundle tessdata (language files)
@@ -27,11 +27,11 @@ if os.path.isdir(tessdata_path):
         if os.path.isfile(fp) and (f.startswith('spa') or f.startswith('eng') or f in ('osd.traineddata', 'pdf.ttf')):
             extra_datas.append((fp, 'tesseract/tessdata'))
 
-# Bundle Poppler binaries
+# Bundle Poppler binaries (exe and all DLL dependencies)
 if os.path.isdir(poppler_path):
     for f in os.listdir(poppler_path):
         fp = os.path.join(poppler_path, f)
-        if os.path.isfile(fp):
+        if os.path.isfile(fp) and (f.endswith('.exe') or f.endswith('.dll')):
             extra_binaries.append((fp, 'poppler'))
 
 a = Analysis(
