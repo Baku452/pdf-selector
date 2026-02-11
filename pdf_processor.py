@@ -42,9 +42,29 @@ if _BUNDLE_DIR:
         print(f"[DEBUG] Poppler configured at: {_poppler_dir}")
     else:
         print(f"[WARNING] Poppler directory not found at: {_poppler_dir}")
-elif pytesseract:
-    # Not bundled - check if Tesseract is available in PATH
-    _TESSERACT_AVAILABLE = True
+else:
+    # Not bundled - check for local installations on Windows
+    if sys.platform == 'win32':
+        import glob
+
+        # Auto-detect Tesseract
+        if pytesseract:
+            _tesseract_local = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            if os.path.isfile(_tesseract_local):
+                pytesseract.pytesseract.tesseract_cmd = _tesseract_local
+            _TESSERACT_AVAILABLE = True
+
+        # Auto-detect Poppler
+        _poppler_candidates = glob.glob(r'C:\poppler\poppler-*\Library\bin') + [
+            r'C:\poppler\Library\bin',
+            r'C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin',
+        ]
+        for _candidate in _poppler_candidates:
+            if os.path.isfile(os.path.join(_candidate, 'pdfinfo.exe')):
+                _POPPLER_PATH = _candidate
+                break
+    elif pytesseract:
+        _TESSERACT_AVAILABLE = True
 
 
 class PDFProcessor:
