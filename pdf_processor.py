@@ -557,7 +557,17 @@ class PDFProcessor:
             ),
         }
 
+        if verbose:
+            print(f"\n[DEBUG] Candidatos encontrados:")
+            for key, values in candidates.items():
+                print(f"  - {key}: {values}")
+
         defaults = {k: (v[0] if v else "") for k, v in candidates.items()}
+
+        if verbose:
+            print(f"\n[DEBUG] Valores por defecto:")
+            for key, value in defaults.items():
+                print(f"  - {key}: '{value}'")
 
         # nombre sugerido (default)
         suggested = ""

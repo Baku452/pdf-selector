@@ -108,7 +108,7 @@ def upload_pdf():
             analysis = processor.analyze(
                 str(filepath),
                 original_filename=file.filename,
-                verbose=False,
+                verbose=True,  # Enable verbose for debugging
             )
 
             result = {
