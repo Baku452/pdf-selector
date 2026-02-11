@@ -21,17 +21,45 @@ jobs:
           python-version: '3.12'
 
       - name: Install Tesseract OCR
-        run: choco install tesseract --no-progress -y
+        run: |
+          choco install tesseract --no-progress -y
+          echo "TESSERACT_PATH=C:\Program Files\Tesseract-OCR" >> $env:GITHUB_ENV
+
+      - name: Verify Tesseract installation
+        run: |
+          $tesseractPath = "C:\Program Files\Tesseract-OCR"
+          Write-Host "=== Tesseract directory ==="
+          Get-ChildItem $tesseractPath -ErrorAction SilentlyContinue | Format-Table Name, Length
+          Write-Host "=== Tessdata directory ==="
+          Get-ChildItem "$tesseractPath\tessdata" -ErrorAction SilentlyContinue | Format-Table Name, Length
+          & "$tesseractPath\tesseract.exe" --version
 
       - name: Install Poppler
         run: |
-          choco install poppler --no-progress -y
-          # Find poppler bin path
-          $popplerBin = (Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler\tools\*\Library\bin" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-          if (-not $popplerBin) {
-            $popplerBin = "C:\ProgramData\chocolatey\bin"
+          # Download poppler directly for reliable path
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip"
+          $zipPath = "$env:TEMP\poppler.zip"
+          $extractPath = "C:\poppler"
+          Write-Host "Downloading Poppler from $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          # Find the bin directory
+          $binDir = (Get-ChildItem "$extractPath\poppler-*\Library\bin" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $binDir) {
+            $binDir = (Get-ChildItem "$extractPath\*\Library\bin" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           }
-          echo "POPPLER_PATH=$popplerBin" >> $env:GITHUB_ENV
+          if (-not $binDir) {
+            # Try flat structure
+            $binDir = (Get-ChildItem "$extractPath" -Recurse -Filter "pdfinfo.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
+          }
+          Write-Host "Poppler bin directory: $binDir"
+          echo "POPPLER_PATH=$binDir" >> $env:GITHUB_ENV
+
+      - name: Verify Poppler installation
+        run: |
+          Write-Host "=== POPPLER_PATH = $env:POPPLER_PATH ==="
+          Get-ChildItem $env:POPPLER_PATH -ErrorAction SilentlyContinue | Format-Table Name, Length
+          & "$env:POPPLER_PATH\pdfinfo.exe" -v 2>&1 | Write-Host
 
       - name: Install Python dependencies
         run: |
@@ -39,13 +67,16 @@ jobs:
           pip install Flask==3.0.0 werkzeug==3.0.1 PyMuPDF==1.23.8
           pip install pytesseract pdf2image Pillow pywebview
 
-      - name: Set Tesseract path
-        run: |
-          $tesseractPath = "C:\Program Files\Tesseract-OCR"
-          echo "TESSERACT_PATH=$tesseractPath" >> $env:GITHUB_ENV
-
       - name: Build EXE with PyInstaller
         run: pyinstaller pdfnamesetter.spec --noconfirm
+
+      - name: Verify bundled files
+        run: |
+          Write-Host "=== Built EXE size ==="
+          Get-ChildItem dist\PDFNameSetter.exe | Format-Table Name, Length
+          Write-Host "=== EXE size in MB ==="
+          $size = (Get-Item dist\PDFNameSetter.exe).Length / 1MB
+          Write-Host "$size MB"
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4

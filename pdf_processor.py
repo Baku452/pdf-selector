@@ -97,12 +97,12 @@ class PDFProcessor:
                     return text
             except Exception as e:
                 if verbose:
-                    print(f"  ⚠️  Error extrayendo texto digital: {e}")
+                    print(f"  [WARN] Error extrayendo texto digital: {e}")
 
         # Si no hay texto o es muy poco, usa OCR
         if use_ocr and pytesseract is not None and convert_from_path is not None:
             if verbose:
-                print(f"  🔍 Aplicando OCR (documento escaneado)...")
+                print(f"  [OCR] Aplicando OCR (documento escaneado)...")
             try:
                 # First, try to convert PDF to images (requires Poppler)
                 images = convert_from_path(
@@ -112,17 +112,17 @@ class PDFProcessor:
                     poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
                 )  # Solo primeras 3 páginas
                 if verbose:
-                    print(f"  ✓ PDF convertido a {len(images)} imágenes")
+                    print(f"  [OK] PDF convertido a {len(images)} imagenes")
 
                 # Then apply OCR to each image (requires Tesseract)
                 for i, image in enumerate(images):
                     ocr_text = pytesseract.image_to_string(image, lang="spa+eng")
                     text += ocr_text
                     if verbose:
-                        print(f"  ✓ OCR página {i+1}: {len(ocr_text)} caracteres extraídos")
+                        print(f"  [OK] OCR pagina {i+1}: {len(ocr_text)} caracteres extraidos")
             except Exception as e:
                 if verbose:
-                    print(f"  ❌ Error en OCR: {type(e).__name__}: {e}")
+                    print(f"  [ERROR] Error en OCR: {type(e).__name__}: {e}")
                     import traceback
                     traceback.print_exc()
                 return ""
@@ -518,7 +518,7 @@ class PDFProcessor:
         """
         if verbose:
             ocr_status = "disponible" if (pytesseract and convert_from_path) else "NO disponible"
-            print(f"  ℹ️  OCR {ocr_status}")
+            print(f"  [INFO] OCR {ocr_status}")
 
         text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
         filename_data = (
@@ -716,7 +716,7 @@ class PDFProcessor:
                 else:
                     # Sin DNI no podemos generar nombre
                     if verbose:
-                        print("  ⚠️  DNI no encontrado en nombre del archivo")
+                        print("  [WARN] DNI no encontrado en nombre del archivo")
                     return None, None
 
                 # 2. NOMBRE
@@ -767,7 +767,7 @@ class PDFProcessor:
             # Si tampoco hay datos del nombre, retorna None
             if verbose:
                 print(
-                    f"  ⚠️  Texto extraído: {len(text) if text else 0} caracteres"
+                    f"  [WARN] Texto extraído: {len(text) if text else 0} caracteres"
                 )
             return None, None
 
@@ -825,7 +825,7 @@ class PDFProcessor:
         else:
             # Si no hay DNI, no podemos generar el nombre
             if verbose:
-                print("  ⚠️  DNI no encontrado - requerido para generar nombre")
+                print("  [WARN] DNI no encontrado - requerido para generar nombre")
             return None, None
 
         # 2. NOMBRE (persona)
@@ -856,7 +856,7 @@ class PDFProcessor:
         else:
             # Nombre es opcional pero recomendado
             if verbose:
-                print("  ⚠️  Nombre no encontrado")
+                print("  [WARN] Nombre no encontrado")
 
         # 3. EMPRESA
         company_name = None
@@ -879,7 +879,7 @@ class PDFProcessor:
         else:
             # Empresa es opcional
             if verbose:
-                print("  ⚠️  Empresa no encontrada")
+                print("  [WARN] Empresa no encontrada")
 
         # 4. TIPO DE EXAMEN
         exam_type_value = None
@@ -896,7 +896,7 @@ class PDFProcessor:
         else:
             # Tipo de examen es opcional
             if verbose:
-                print("  ⚠️  Tipo de examen no encontrado")
+                print("  [WARN] Tipo de examen no encontrado")
 
         # 5. CMESPINAR (constante)
         parts.append("CMESPINAR")
@@ -932,7 +932,7 @@ class PDFProcessor:
         # Valida que al menos tengamos DNI y FECHA (mínimos requeridos)
         if not parts or len(parts) < 2:
             if verbose:
-                print("  ⚠️  Información insuficiente para generar nombre")
+                print("  [WARN] Información insuficiente para generar nombre")
             return None, None
 
         # Une las partes y limpia caracteres no válidos
