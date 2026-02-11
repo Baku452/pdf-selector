@@ -23,6 +23,7 @@ except ImportError:
 # Configure bundled Tesseract/Poppler paths when running from PyInstaller
 _BUNDLE_DIR = getattr(sys, '_MEIPASS', None)
 _TESSERACT_AVAILABLE = False
+_POPPLER_PATH = None  # Store poppler path for pdf2image
 
 if _BUNDLE_DIR:
     _tesseract_exe = os.path.join(_BUNDLE_DIR, 'tesseract', 'tesseract.exe')
@@ -36,6 +37,7 @@ if _BUNDLE_DIR:
 
     _poppler_dir = os.path.join(_BUNDLE_DIR, 'poppler')
     if os.path.isdir(_poppler_dir):
+        _POPPLER_PATH = _poppler_dir  # Store for explicit use in convert_from_path
         os.environ['PATH'] = _poppler_dir + os.pathsep + os.environ.get('PATH', '')
         print(f"[DEBUG] Poppler configured at: {_poppler_dir}")
     else:
@@ -104,7 +106,10 @@ class PDFProcessor:
             try:
                 # First, try to convert PDF to images (requires Poppler)
                 images = convert_from_path(
-                    pdf_path, first_page=1, last_page=3
+                    pdf_path,
+                    first_page=1,
+                    last_page=3,
+                    poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
                 )  # Solo primeras 3 páginas
                 if verbose:
                     print(f"  ✓ PDF convertido a {len(images)} imágenes")
