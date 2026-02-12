@@ -320,12 +320,35 @@ function displayResults(resultsData, sessionId) {
         // download this PDF with chosen name
         const downloadOneBtn = div.querySelector('[data-action="download-one"]');
         if (downloadOneBtn) {
-            downloadOneBtn.addEventListener('click', () => {
+            downloadOneBtn.addEventListener('click', async () => {
                 const preview = div.querySelector('[data-role="preview"]').textContent || '';
                 if (!preview || preview.startsWith('(')) return;
                 const sid = resultsContent.dataset.sessionId;
                 const idx = div.dataset.fileIndex;
                 if (!sid || idx == null) return;
+
+                // Use pywebview native save dialog if available (desktop mode)
+                if (window.pywebview && window.pywebview.api) {
+                    downloadOneBtn.disabled = true;
+                    downloadOneBtn.textContent = 'Guardando...';
+                    try {
+                        const result = await window.pywebview.api.save_file(sid, parseInt(idx, 10), preview);
+                        if (result.error) {
+                            alert('Error: ' + result.error);
+                        } else if (result.ok) {
+                            downloadOneBtn.textContent = 'Guardado!';
+                            setTimeout(() => { downloadOneBtn.textContent = 'Descargar PDF'; }, 1500);
+                        }
+                    } catch (e) {
+                        alert('Error: ' + (e.message || e));
+                    } finally {
+                        downloadOneBtn.disabled = false;
+                        if (downloadOneBtn.textContent === 'Guardando...') downloadOneBtn.textContent = 'Descargar PDF';
+                    }
+                    return;
+                }
+
+                // Fallback: browser download
                 const url = `/api/download/${sid}/${idx}?filename=${encodeURIComponent(preview)}`;
                 const a = document.createElement('a');
                 a.href = url;
@@ -350,6 +373,7 @@ function displayResults(resultsData, sessionId) {
         resultsContent.appendChild(zipWrap);
 
         document.getElementById('downloadAllZip').addEventListener('click', async () => {
+            const zipBtn = document.getElementById('downloadAllZip');
             const files = [];
             downloadables.forEach(card => {
                 const previewEl = card.querySelector('[data-role="preview"]');
@@ -362,6 +386,29 @@ function displayResults(resultsData, sessionId) {
                 alert('No hay nombres válidos para descargar. Completa al menos un nombre.');
                 return;
             }
+
+            // Use pywebview native save dialog if available (desktop mode)
+            if (window.pywebview && window.pywebview.api) {
+                zipBtn.disabled = true;
+                zipBtn.textContent = 'Guardando...';
+                try {
+                    const result = await window.pywebview.api.save_zip(zipSessionId, JSON.stringify(files));
+                    if (result.error) {
+                        alert('Error: ' + result.error);
+                    } else if (result.ok) {
+                        zipBtn.textContent = 'Guardado!';
+                        setTimeout(() => { zipBtn.textContent = 'Descargar todos (ZIP)'; }, 1500);
+                    }
+                } catch (e) {
+                    alert('Error: ' + (e.message || e));
+                } finally {
+                    zipBtn.disabled = false;
+                    if (zipBtn.textContent === 'Guardando...') zipBtn.textContent = 'Descargar todos (ZIP)';
+                }
+                return;
+            }
+
+            // Fallback: browser download
             try {
                 const res = await fetch('/api/download-zip', {
                     method: 'POST',

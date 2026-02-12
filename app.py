@@ -205,6 +205,78 @@ def start_server(port):
     app.run(debug=False, host='127.0.0.1', port=port, use_reloader=False)
 
 
+class Api:
+    """pywebview JS-to-Python bridge for native file operations."""
+
+    def save_file(self, session_id, file_index, filename):
+        """Open native Save As dialog and copy the PDF with the new name."""
+        import webview
+
+        session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+        source = session_path / f"{file_index}.pdf"
+        if not source.is_file():
+            return {'error': 'Archivo no encontrado o sesion expirada'}
+
+        safe_name = _safe_download_filename(filename)
+        windows = webview.windows
+        if not windows:
+            return {'error': 'No hay ventana disponible'}
+
+        result = windows[0].create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=safe_name,
+            file_types=('PDF Files (*.pdf)',),
+        )
+
+        if not result:
+            return {'cancelled': True}
+
+        dest = result if isinstance(result, str) else result[0]
+        try:
+            shutil.copy2(str(source), dest)
+            return {'ok': True, 'path': dest}
+        except Exception as e:
+            return {'error': str(e)}
+
+    def save_zip(self, session_id, files_json):
+        """Open native Save As dialog and save a ZIP with renamed PDFs."""
+        import webview
+        import json
+
+        files = json.loads(files_json) if isinstance(files_json, str) else files_json
+        session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+        if not session_path.is_dir():
+            return {'error': 'Sesion no encontrada o expirada'}
+
+        windows = webview.windows
+        if not windows:
+            return {'error': 'No hay ventana disponible'}
+
+        result = windows[0].create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename='PDFNameSetter_descargas.zip',
+            file_types=('ZIP Files (*.zip)',),
+        )
+
+        if not result:
+            return {'cancelled': True}
+
+        dest = result if isinstance(result, str) else result[0]
+        try:
+            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for item in files:
+                    idx = item.get('index')
+                    name = _safe_download_filename(item.get('filename', ''))
+                    if idx is None:
+                        continue
+                    path = session_path / f"{idx}.pdf"
+                    if path.is_file():
+                        zf.write(path, name)
+            return {'ok': True, 'path': dest}
+        except Exception as e:
+            return {'error': str(e)}
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     is_bundled = getattr(sys, 'frozen', False)
@@ -212,6 +284,7 @@ if __name__ == '__main__':
     if is_bundled:
         # Desktop mode: open native window with pywebview
         import webview
+        api = Api()
         t = threading.Thread(target=start_server, args=(port,), daemon=True)
         t.start()
         webview.create_window(
@@ -220,10 +293,11 @@ if __name__ == '__main__':
             width=1100,
             height=750,
             min_size=(800, 500),
+            js_api=api,
         )
         webview.start()
     else:
         # Dev mode: normal Flask server
-        print(f"\n🌐 Servidor iniciado en http://localhost:{port}")
+        print(f"\nServidor iniciado en http://localhost:{port}")
         print("   Presiona Ctrl+C para detener el servidor\n")
         app.run(debug=True, host='127.0.0.1', port=port)
