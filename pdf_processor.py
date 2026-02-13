@@ -350,6 +350,10 @@ class PDFProcessor:
         "CONTRATA", "CONTRATISTA", "SAC", "SRL", "EIRL",
         "OCUPACIONAL", "MEDICO", "EXAMEN", "RESULTADO",
         "INGRESO", "EGRESO", "PERIODICO", "PREOCUPACIONAL",
+        "POSTOCUPACIONAL", "RETIRO",
+        "TIPO", "EVALUACION", "FORMATOS", "PARA", "CONSENTIMIENTO",
+        "INFORMADO", "NUMERO", "PASAPORTE", "SERVICIOS",
+        "LOGISTICA", "INFORME", "LLENADO",
     }
 
     def _clean_person_name(self, raw: str) -> str:
@@ -376,7 +380,7 @@ class PDFProcessor:
         candidates = []
 
         labeled_patterns = [
-            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{5,80})",
+            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO)[.\s]*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{5,80})",
         ]
         for pat in labeled_patterns:
             for m in re.finditer(pat, text, flags=re.IGNORECASE):
@@ -485,11 +489,16 @@ class PDFProcessor:
         tipo_examen="",
         fecha="",
         include=None,
+        fmt="hudbay",
     ):
         """
-        Construye el nombre final con formato:
-        FECHA TIPO DNI NOMBRE-EMPRESA.pdf
-        Ejemplo: 31.01.26 EMPO 76248882 HUAMAN POCCO JESUS YOVANI-G4S PERU SAC.pdf
+        Construye el nombre final.
+
+        fmt="hudbay":   FECHA TIPO DNI NOMBRE-EMPRESA.pdf
+                        31.01.26 EMPO 76248882 HUAMAN POCCO JESUS YOVANI-G4S PERU SAC.pdf
+
+        fmt="standard": DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-FECHA.pdf
+                        45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26.pdf
         """
         include = include or {}
 
@@ -507,6 +516,25 @@ class PDFProcessor:
         # Abbreviate exam type
         tipo_abbr = self._EXAM_TYPE_ABBR.get(tipo_examen, tipo_examen)
 
+        if fmt == "standard":
+            # Standard: DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-FECHA.pdf
+            parts = []
+            if use("dni", dni) and dni:
+                parts.append(dni)
+            if use("nombre", nombre) and nombre:
+                parts.append(nombre)
+            if use("empresa", empresa) and empresa:
+                parts.append(empresa)
+            if use("tipo_examen", tipo_abbr) and tipo_abbr:
+                parts.append(tipo_abbr)
+            parts.append("CMESPINAR")
+            if use("fecha", fecha) and fecha:
+                parts.append(self._date_to_short(fecha))
+            new_name = "-".join([p for p in parts if p])
+            new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
+            return new_name + ".pdf" if new_name else ""
+
+        # Hudbay (default): FECHA TIPO DNI NOMBRE-EMPRESA.pdf
         parts = []
 
         if use("fecha", fecha) and fecha:
@@ -531,6 +559,31 @@ class PDFProcessor:
         new_name = " ".join([p for p in parts if p])
         new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
         return new_name + ".pdf" if new_name else ""
+
+    @staticmethod
+    def detect_format(filename):
+        """Detect if a filename matches Hudbay or Standard format.
+
+        Hudbay:   starts with date (DD.MM.YY), spaces between fields
+        Standard: starts with DNI (8 digits), hyphens between fields, contains CMESPINAR
+
+        Returns 'hudbay', 'standard', or None if unrecognized.
+        """
+        if not filename:
+            return None
+        name = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
+        if not name:
+            return None
+
+        # Standard: starts with 8-digit DNI, uses hyphens, contains CMESPINAR
+        if re.match(r"^\d{8}-", name) and "CMESPINAR" in name.upper():
+            return "standard"
+
+        # Hudbay: starts with date DD.MM.YY, uses spaces
+        if re.match(r"^\d{1,2}\.\d{1,2}\.\d{2,4}\s", name):
+            return "hudbay"
+
+        return None
 
     def analyze(self, pdf_path, original_filename=None, verbose=False):
         """
@@ -616,6 +669,8 @@ class PDFProcessor:
         else:
             suggested = ""
 
+        detected_fmt = self.detect_format(original_filename)
+
         return {
             "success": success and bool(suggested),
             "suggested_name": suggested or None,
@@ -626,13 +681,147 @@ class PDFProcessor:
                 len((text or "").strip()) < 10 and bool(filename_data)
             ),
             "notes": notes,
+            "detected_format": detected_fmt,
         }
 
+    # Reverse map: abbreviation -> full exam type name
+    _ABBR_TO_EXAM_TYPE = {v: k for k, v in _EXAM_TYPE_ABBR.items()}
+
+    def _parse_exam_type_token(self, token):
+        """Resolve an exam type token (full name or abbreviation) to the full name."""
+        upper = token.upper().strip()
+        if upper in self._EXAM_TYPE_ABBR:
+            return upper  # already full name
+        if upper in self._ABBR_TO_EXAM_TYPE:
+            return self._ABBR_TO_EXAM_TYPE[upper]  # abbreviation -> full
+        return None
+
     def extract_from_filename(self, filename):
-        """Extrae información del nombre del archivo como fallback"""
-        # Ejemplo: "31.12.25 EMOA 77206347 GONZA URQUIZO JULIO CESAR-CONSORCIO BYAS CHILLOROYA MECANICA & REVESTIMIENTO.pdf"
+        """Extrae información del nombre del archivo como fallback.
+
+        Handles two known formats:
+        - Hudbay:   'DD.MM.YY TIPO DNI NOMBRE-EMPRESA.pdf'
+        - Standard: 'DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-DD.MM.YY.pdf'
+        - Unknown:  generic heuristic extraction
+        """
         parts = {}
-        name_without_ext = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0]
+        name_without_ext = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
+        if not name_without_ext:
+            return parts
+
+        fmt = self.detect_format(filename)
+
+        if fmt == "hudbay":
+            return self._parse_hudbay_filename(name_without_ext)
+        elif fmt == "standard":
+            return self._parse_standard_filename(name_without_ext)
+        else:
+            return self._parse_generic_filename(name_without_ext)
+
+    def _parse_hudbay_filename(self, name):
+        """Parse Hudbay format: 'DD.MM.YY TIPO DNI NOMBRE-EMPRESA'
+        Example: '31.01.26 EMPO 76248882 HUAMAN POCCO JESUS YOVANI-G4S PERU SAC'
+        """
+        parts = {}
+
+        # Split name from company at the hyphen (last major separator)
+        # But the hyphen joins NOMBRE-EMPRESA, so split on first hyphen
+        main_part = name
+        company_part = ""
+        if "-" in name:
+            # Find the hyphen that separates person name from company
+            main_part, company_part = name.split("-", 1)
+
+        tokens = main_part.split()
+        # Expected: [DATE, TIPO, DNI, NAME_WORD1, NAME_WORD2, ...]
+
+        idx = 0
+        # 1. Date (DD.MM.YY)
+        if idx < len(tokens) and re.match(r"\d{1,2}\.\d{1,2}\.\d{2,4}$", tokens[idx]):
+            parts["date"] = tokens[idx]
+            idx += 1
+
+        # 2. Exam type (abbreviation or full)
+        if idx < len(tokens):
+            exam = self._parse_exam_type_token(tokens[idx])
+            if exam:
+                parts["exam_type"] = exam
+                idx += 1
+
+        # 3. DNI (8 digits)
+        if idx < len(tokens) and re.match(r"\d{8}$", tokens[idx]):
+            parts["dni"] = tokens[idx]
+            idx += 1
+
+        # 4. Remaining tokens = person name
+        if idx < len(tokens):
+            person_name = " ".join(tokens[idx:]).strip()
+            if len(person_name.split()) >= 2:
+                parts["person_name"] = person_name
+
+        # 5. Company (after the hyphen)
+        if company_part.strip():
+            parts["company"] = company_part.strip()
+
+        return parts
+
+    def _parse_standard_filename(self, name):
+        """Parse Standard format: 'DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-DD.MM.YY'
+        Example: '45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26'
+        """
+        parts = {}
+
+        # Split by hyphens, but some fields contain spaces (NOMBRE, EMPRESA)
+        # Strategy: walk segments from both ends where we know the structure
+        segments = name.split("-")
+        if len(segments) < 3:
+            return self._parse_generic_filename(name)
+
+        idx_start = 0
+        idx_end = len(segments) - 1
+
+        # 1. First segment: DNI (8 digits)
+        if re.match(r"\d{8}$", segments[0].strip()):
+            parts["dni"] = segments[0].strip()
+            idx_start = 1
+
+        # From the end: date, CMESPINAR, exam type
+        # Last segment: date (DD.MM.YY)
+        if re.match(r"\d{1,2}\.\d{1,2}\.\d{2,4}$", segments[idx_end].strip()):
+            parts["date"] = segments[idx_end].strip()
+            idx_end -= 1
+
+        # CMESPINAR
+        if idx_end >= idx_start and segments[idx_end].strip().upper() == "CMESPINAR":
+            idx_end -= 1
+
+        # Exam type (abbreviation or full)
+        if idx_end >= idx_start:
+            exam = self._parse_exam_type_token(segments[idx_end].strip())
+            if exam:
+                parts["exam_type"] = exam
+                idx_end -= 1
+
+        # Middle segments: NOMBRE and EMPRESA
+        # We need to figure out where NOMBRE ends and EMPRESA begins
+        middle = segments[idx_start:idx_end + 1]
+        if len(middle) >= 2:
+            # First middle segment is person name, rest is company
+            parts["person_name"] = middle[0].strip()
+            parts["company"] = "-".join(middle[1:]).strip()
+        elif len(middle) == 1:
+            # Only one segment - could be name or company
+            val = middle[0].strip()
+            if len(val.split()) >= 2 and val[0].isalpha():
+                parts["person_name"] = val
+            else:
+                parts["company"] = val
+
+        return parts
+
+    def _parse_generic_filename(self, name_without_ext):
+        """Fallback: generic heuristic extraction for unknown formats."""
+        parts = {}
 
         # Extrae fecha (DD.MM.YY o DD-MM-YY)
         date_match = re.search(
@@ -646,30 +835,25 @@ class PDFProcessor:
         if dni_match:
             parts["dni"] = dni_match.group(1)
 
-        # Busca EMOA
-        if "emoa" in name_without_ext.lower():
-            parts["doc_type"] = "EMOA"
-
-        # Busca tipo de examen
-        exam_types = ["PERIODICO", "INGRESO", "EGRESO", "RETIRO"]
-        for exam_type in exam_types:
-            if exam_type.lower() in name_without_ext.lower():
-                parts["exam_type"] = exam_type
-                break
+        # Busca tipo de examen (full names and abbreviations)
+        all_exam_tokens = list(self._EXAM_TYPE_ABBR.keys()) + list(self._ABBR_TO_EXAM_TYPE.keys())
+        upper_name = name_without_ext.upper()
+        for token in all_exam_tokens:
+            if token in upper_name:
+                exam = self._parse_exam_type_token(token)
+                if exam:
+                    parts["exam_type"] = exam
+                    break
 
         # Extrae nombre de persona (después de DNI, antes de guion)
-        # Formato: "31.12.25 EMOA 77206347 GONZA URQUIZO JULIO CESAR-CONSORCIO"
-        # Busca: número de DNI seguido de palabras en mayúsculas hasta un guion
         name_patterns = [
-            r"\d{8}\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{8,50}?)(?:\s*-)",  # DNI seguido de nombre hasta guion
-            r"(?:DNI|dni|ID|id)[:\s]*\d+\s+([A-ZÁÉÍÓÚÑ\s]{10,50}?)(?:-|CONSORCIO|EMPRESA|COMPANY)",  # Patrón alternativo
+            r"\d{8}\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{8,50}?)(?:\s*-)",
+            r"(?:DNI|dni|ID|id)[:\s]*\d+\s+([A-ZÁÉÍÓÚÑ\s]{10,50}?)(?:-|CONSORCIO|EMPRESA|COMPANY)",
         ]
-
         for pattern in name_patterns:
             name_match = re.search(pattern, name_without_ext, re.IGNORECASE)
             if name_match:
                 person_name = name_match.group(1).strip()
-                # Valida que sea un nombre (al menos 2 palabras, no solo números)
                 if (
                     len(person_name.split()) >= 2
                     and not person_name.replace(" ", "").isdigit()
@@ -680,26 +864,16 @@ class PDFProcessor:
         # Extrae empresa (después del guion)
         if "-" in name_without_ext:
             company_part = name_without_ext.split("-", 1)[1]
-            # Limpia y toma las primeras palabras (máximo 4)
             company_clean = re.sub(r"[&]", "Y", company_part)
-            # Elimina "MECANICA" y "REVESTIMIENTO" si están al final, o toma las primeras palabras
             company_words = company_clean.split()
-            # Si hay muchas palabras, toma las primeras 3-4 más relevantes
             if len(company_words) > 4:
-                # Prioriza CONSORCIO, BYAS, CHILLOROYA
                 important_words = [
-                    w
-                    for w in company_words[:6]
+                    w for w in company_words[:6]
                     if w.upper() not in ["MECANICA", "REVESTIMIENTO", "Y"]
                 ]
-                company_words = (
-                    important_words[:4]
-                    if important_words
-                    else company_words[:3]
-                )
+                company_words = important_words[:4] if important_words else company_words[:3]
             else:
                 company_words = company_words[:4]
-
             if company_words:
                 parts["company"] = " ".join(company_words)
 

@@ -103,15 +103,48 @@ function dateToShort(value) {
     return `${dd}.${mm}.${yy}`;
 }
 
-function buildFinalFilename(fields, include) {
+function getSelectedFormat() {
+    const checked = document.querySelector('input[name="format"]:checked');
+    return checked ? checked.value : 'hudbay';
+}
+
+function autoSelectFormat(resultsData) {
+    // Use the first file's detected format to auto-select the radio button
+    for (const r of resultsData) {
+        if (r.detected_format) {
+            const radio = document.querySelector(`input[name="format"][value="${r.detected_format}"]`);
+            if (radio) radio.checked = true;
+            return;
+        }
+    }
+}
+
+// Global list of updatePreview callbacks so radio change can trigger them all
+const _previewUpdaters = [];
+
+function buildFinalFilename(fields, include, format) {
     const dni = (fields.dni || '').trim();
     const nombre = (fields.nombre || '').trim().toUpperCase();
     const empresa = (fields.empresa || '').trim().toUpperCase();
     const tipoRaw = (fields.tipo_examen || '').trim().toUpperCase();
     const tipoAbbr = EXAM_TYPE_ABBR[tipoRaw] || tipoRaw;
     const fecha = dateToShort(fields.fecha);
+    const fmt = format || getSelectedFormat();
 
-    // Format: FECHA TIPO DNI NOMBRE-EMPRESA.pdf
+    if (fmt === 'standard') {
+        // Standard: DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-FECHA.pdf
+        const parts = [];
+        if (include.dni && dni) parts.push(dni);
+        if (include.nombre && nombre) parts.push(nombre);
+        if (include.empresa && empresa) parts.push(empresa);
+        if (include.tipo_examen && tipoAbbr) parts.push(tipoAbbr);
+        parts.push('CMESPINAR');
+        if (include.fecha && fecha) parts.push(fecha);
+        const base = parts.filter(Boolean).join('-').replace(/[<>:"/\\|?*]/g, '');
+        return base ? `${base}.pdf` : '';
+    }
+
+    // Hudbay: FECHA TIPO DNI NOMBRE-EMPRESA.pdf
     const parts = [];
     if (include.fecha && fecha) parts.push(fecha);
     if (include.tipo_examen && tipoAbbr) parts.push(tipoAbbr);
@@ -150,6 +183,7 @@ function onProcessClick() {
         .then(function (_) {
             var ok = _.ok, data = _.data;
             if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
+            autoSelectFormat(data.results);
             displayResults(data.results, data.session_id);
         })
         .catch(function (err) { alert('Error: ' + (err.message || err)); })
@@ -164,6 +198,26 @@ function displayResults(resultsData, sessionId) {
     results.style.display = 'block';
     resultsContent.innerHTML = '';
     resultsContent.dataset.sessionId = sessionId || '';
+    _previewUpdaters.length = 0;
+
+    // Insert format selector at top of results
+    const fmt = getSelectedFormat();
+    const formatDiv = document.createElement('div');
+    formatDiv.className = 'format-selector';
+    formatDiv.id = 'formatSelector';
+    formatDiv.innerHTML = `
+        <span class="format-label">Formato de nombre:</span>
+        <label class="format-option"><input type="radio" name="format" value="hudbay" ${fmt === 'hudbay' ? 'checked' : ''}> Hudbay</label>
+        <label class="format-option"><input type="radio" name="format" value="standard" ${fmt === 'standard' ? 'checked' : ''}> Estándar</label>
+    `;
+    resultsContent.appendChild(formatDiv);
+
+    // Wire radio change -> update all previews
+    formatDiv.querySelectorAll('input[name="format"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            _previewUpdaters.forEach(fn => fn());
+        });
+    });
 
     resultsData.forEach(result => {
         const div = document.createElement('div');
@@ -215,7 +269,7 @@ function displayResults(resultsData, sessionId) {
 
             <div class="order-block">
                 <div class="order-label">Campos incluidos</div>
-                <div class="order-help">Activa o desactiva campos opcionales. Formato: FECHA TIPO DNI NOMBRE-EMPRESA</div>
+                <div class="order-help">Activa o desactiva campos opcionales.</div>
                 <div class="order-list" data-role="order-list">
                     ${renderOrderItem('fecha', 'Fecha', true, false)}
                     ${renderOrderItem('tipo_examen', 'Tipo de examen', true, false)}
@@ -278,6 +332,7 @@ function displayResults(resultsData, sessionId) {
             const name = buildFinalFilename(fields, include);
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
         };
+        _previewUpdaters.push(updatePreview);
 
         // select -> input
         div.querySelectorAll('[data-field-select]').forEach(sel => {

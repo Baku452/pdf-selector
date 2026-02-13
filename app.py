@@ -120,6 +120,7 @@ def upload_pdf():
                 "notes": analysis.get("notes", []),
                 "text_chars": analysis.get("text_chars", 0),
                 "file_index": file_index,
+                "detected_format": analysis.get("detected_format"),
             }
             results.append(result)
             file_index += 1
