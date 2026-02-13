@@ -419,6 +419,11 @@ class PDFProcessor:
     def _clean_company_name(self, raw: str) -> str:
         """Clean company name: keep legal suffixes, limit to 5 words, filter OCR noise."""
         raw = self._clean_spaces(raw)
+        # Fix common OCR misreads of '&': "Má" -> "M&", "&$" -> "&", collapse spaces around &
+        raw = re.sub(r"(\w)\s*á\s+(\w)", r"\1&\2", raw)  # "Má S" -> "M&S"
+        raw = re.sub(r"&[\$]", "&", raw)  # "&$" -> "&"
+        raw = re.sub(r"\s*&\s*", "&", raw)  # collapse spaces around &
+        raw = self._clean_spaces(raw)
         # Reject if mostly lowercase (OCR garbage like "contiene informacién...")
         words = raw.split()
         upper_count = sum(1 for w in words if w[0].isupper() if w)
