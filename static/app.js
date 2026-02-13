@@ -337,7 +337,9 @@ function displayResults(resultsData, sessionId) {
             sel.addEventListener('change', () => {
                 const field = sel.getAttribute('data-field-select');
                 const input = div.querySelector(`[data-field-input="${field}"]`);
-                if (input) input.value = sel.value || '';
+                let val = sel.value || '';
+                if (field === 'tipo_examen' && val) val = EXAM_TYPE_ABBR[val] || val;
+                if (input) input.value = val;
                 updatePreview();
             });
         });
@@ -515,7 +517,7 @@ function renderFieldRow(label, field, options, defaultValue, { required }) {
                 <option value="">(seleccionar)</option>
                 ${optHtml}
             </select>
-            <input class="field-input" data-field-input="${field}" type="text" value="${escapeHtml(defaultValue || '')}" placeholder="${required ? 'requerido' : 'opcional'}" />
+            <input class="field-input" data-field-input="${field}" type="text" value="${escapeHtml(field === 'tipo_examen' ? (EXAM_TYPE_ABBR[defaultValue] || defaultValue || '') : (defaultValue || ''))}" placeholder="${required ? 'requerido' : 'opcional'}" />
         </div>
     `;
 }
