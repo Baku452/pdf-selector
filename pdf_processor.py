@@ -319,12 +319,77 @@ class PDFProcessor:
         found.extend(re.findall(r"\b(\d{8})\b", text))
         return self._dedupe_keep_order(found)
 
+    # Map checkbox/form labels to canonical exam types
+    _EXAM_LABEL_MAP = {
+        "PREOCUPACIONAL": "PREOCUPACIONAL",
+        "PRE-OCUPACIONAL": "PREOCUPACIONAL",
+        "PRE OCUPACIONAL": "PREOCUPACIONAL",
+        "POSTOCUPACIONAL": "POSTOCUPACIONAL",
+        "POST-OCUPACIONAL": "POSTOCUPACIONAL",
+        "POST OCUPACIONAL": "POSTOCUPACIONAL",
+        "PERIODICO": "PERIODICO",
+        "PERIÓDICO": "PERIODICO",
+        "ANUAL": "PERIODICO",
+        "INGRESO": "INGRESO",
+        "EGRESO": "EGRESO",
+        "RETIRO": "RETIRO",
+    }
+
     def extract_exam_type_candidates(self, text: str):
-        """Devuelve lista de tipos de examen encontrados en el texto."""
+        """Devuelve lista de tipos de examen encontrados en el texto.
+
+        Prioritizes:
+        1. Labeled fields like 'TIPO DE EXAMEN: PREOCUPACIONAL'
+        2. Checkbox-style forms where 'x' marks the selected type
+        3. Contextual phrases like 'EXAMEN MÉDICO PERIODICO'
+        4. Fallback: any exam type keyword found in text
+        """
         if not text:
             return []
+
+        prioritized = []
+        _EXAM_RE = r"PRE[- ]?OCUPACIONAL|POST[- ]?OCUPACIONAL|PERI[OÓ]DICO|ANUAL|INGRESO|EGRESO|RETIRO"
+
+        # 1. Checkbox-style: "Anual x" or "x Periodico" (x marks the checked option)
+        #    Highest priority because it indicates what's actually selected.
+        checkbox_patterns = [
+            # "label x" or "label X" (checked after label)
+            r"(" + _EXAM_RE + r")\s*\|?\s*[xX✓✗☒]\b",
+            # "|x label" or "x| label" (checked before label)
+            r"[|]?\s*[xX✓✗☒]\s*\|?\s*(" + _EXAM_RE + r")",
+        ]
+        for pat in checkbox_patterns:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+                canonical = self._EXAM_LABEL_MAP.get(m.group(1).upper().strip())
+                if canonical:
+                    prioritized.append(canonical)
+
+        # 2. Labeled on same line: "TIPO DE EXAMEN: PREOCUPACIONAL"
+        for line in text.split("\n"):
+            labeled = re.findall(
+                r"TIPO\s+DE\s+(?:EXAMEN|EVALUACI[OÓ]N)\s*[:\-]\s*(" + _EXAM_RE + r")",
+                line, flags=re.IGNORECASE,
+            )
+            for match in labeled:
+                canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
+                if canonical:
+                    prioritized.append(canonical)
+
+        # 3. Contextual: "EXAMEN MÉDICO PERIODICO"
+        contextual = re.findall(
+            r"EXAMEN\s+M[EÉ]DICO\s+(" + _EXAM_RE + r")",
+            text, flags=re.IGNORECASE,
+        )
+        for match in contextual:
+            canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
+            if canonical:
+                prioritized.append(canonical)
+
+        if prioritized:
+            return self._dedupe_keep_order(prioritized)
+
+        # 4. Fallback: any exam type keyword in text
         upper = text.upper()
-        # Normalize hyphenated variants for matching
         normalized = upper.replace("PRE-OCUPACIONAL", "PREOCUPACIONAL") \
                          .replace("POST-OCUPACIONAL", "POSTOCUPACIONAL") \
                          .replace("PRE OCUPACIONAL", "PREOCUPACIONAL") \

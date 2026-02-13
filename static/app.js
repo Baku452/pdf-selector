@@ -243,11 +243,10 @@ function displayResults(resultsData, sessionId) {
                 <div class="order-label">Campos incluidos</div>
                 <div class="order-help">Activa o desactiva campos opcionales.</div>
                 <div class="order-list" data-role="order-list">
-                    ${renderOrderItem('fecha', 'Fecha', true, false)}
-                    ${renderOrderItem('tipo_examen', 'Tipo de examen', true, false)}
-                    ${renderOrderItem('dni', 'DNI', true, true)}
-                    ${renderOrderItem('nombre', 'Nombre', true, false)}
-                    ${renderOrderItem('empresa', 'Empresa', true, false)}
+                    ${(result.detected_format === 'hudbay'
+                        ? [['fecha','Fecha'],['tipo_examen','Tipo de examen'],['dni','DNI'],['nombre','Nombre'],['empresa','Empresa']]
+                        : [['dni','DNI'],['nombre','Nombre'],['empresa','Empresa'],['tipo_examen','Tipo de examen'],['fecha','Fecha']]
+                    ).map(([f,l]) => renderOrderItem(f, l, true, f === 'dni')).join('')}
                 </div>
             </div>
 
@@ -312,9 +311,23 @@ function displayResults(resultsData, sessionId) {
         };
         _previewUpdaters.push(updatePreview);
 
-        // format radio -> update only this card's preview
+        const HUDBAY_ORDER = ['fecha', 'tipo_examen', 'dni', 'nombre', 'empresa'];
+        const STANDARD_ORDER = ['dni', 'nombre', 'empresa', 'tipo_examen', 'fecha'];
+
+        const reorderFields = (fmt) => {
+            const list = div.querySelector('[data-role="order-list"]');
+            if (!list) return;
+            const order = fmt === 'hudbay' ? HUDBAY_ORDER : STANDARD_ORDER;
+            order.forEach(field => {
+                const item = list.querySelector(`[data-order-field="${field}"]`);
+                if (item) list.appendChild(item);
+            });
+        };
+
+        // format radio -> reorder fields and update preview
         div.querySelectorAll('input[name^="format_"]').forEach(radio => {
             radio.addEventListener('change', () => {
+                reorderFields(radio.value);
                 updatePreview();
             });
         });
@@ -474,10 +487,19 @@ function displayResults(resultsData, sessionId) {
     results.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function examTypeDisplayLabel(value) {
+    const abbr = EXAM_TYPE_ABBR[value];
+    if (abbr && abbr !== value) return `${value} (${abbr})`;
+    return value;
+}
+
 function renderFieldRow(label, field, options, defaultValue, { required }) {
     const safeOptions = Array.isArray(options) ? options : [];
     const optHtml = safeOptions.length
-        ? safeOptions.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')
+        ? safeOptions.map(v => {
+            const display = field === 'tipo_examen' ? examTypeDisplayLabel(v) : v;
+            return `<option value="${escapeHtml(v)}">${escapeHtml(display)}</option>`;
+        }).join('')
         : `<option value="">(no encontrado)</option>`;
 
     return `
