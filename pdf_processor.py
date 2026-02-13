@@ -561,6 +561,31 @@ class PDFProcessor:
         return new_name + ".pdf" if new_name else ""
 
     @staticmethod
+    def detect_format_from_content(text):
+        """Detect if PDF content is a Hudbay document based on OCR text patterns.
+
+        Looks for Hudbay logo OCR variants, document IDs, and explicit mentions.
+        Returns 'hudbay' if detected, None otherwise.
+        """
+        if not text:
+            return None
+        upper = text.upper()
+        # Hudbay logo OCRs as variations: "H D BAY", "H DB AY", "H UDB AY", "HUDBAY"
+        # Also look for Hudbay document IDs and explicit mentions
+        hudbay_patterns = [
+            r"H\s*\.?\s*U?\s*D\s*B\s*AY",          # H D BAY, H DB AY, H UDB AY, HUDBAY
+            r"HUDBAY",                                # explicit mention
+            r"FOR-SS[O0]-\d{3}",                      # Hudbay document ID (FOR-SSO-293)
+            r"FORMATOS\s+PARA\s+LA\s+VALORACI[OÓ]N\s+DE\s+LA\s+APTITUD",  # Hudbay form title
+            r"AUTORIZADO\s+POR\s+HUDBAY",             # "Autorizado por Hudbay"
+            r"\bHBP\b",                                # Hudbay Perú abbreviation
+        ]
+        for pat in hudbay_patterns:
+            if re.search(pat, upper):
+                return "hudbay"
+        return None
+
+    @staticmethod
     def detect_format(filename):
         """Detect if a filename matches Hudbay or Standard format.
 
@@ -669,7 +694,10 @@ class PDFProcessor:
         else:
             suggested = ""
 
-        detected_fmt = self.detect_format(original_filename)
+        # Detect format: content-based detection takes priority over filename
+        detected_fmt = self.detect_format_from_content(text)
+        if not detected_fmt:
+            detected_fmt = self.detect_format(original_filename)
 
         return {
             "success": success and bool(suggested),
