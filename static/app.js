@@ -109,14 +109,19 @@ function getSelectedFormat() {
 }
 
 function autoSelectFormat(resultsData) {
-    // Use the first file's detected format to auto-select the radio button
+    // Use the first file's detected format to auto-select all radio buttons
+    let fmt = null;
     for (const r of resultsData) {
         if (r.detected_format) {
-            const radio = document.querySelector(`input[name="format"][value="${r.detected_format}"]`);
-            if (radio) radio.checked = true;
-            return;
+            fmt = r.detected_format;
+            break;
         }
     }
+    if (!fmt) return;
+    document.querySelectorAll('input[name="format"]').forEach(r => {
+        r.checked = (r.value === fmt);
+    });
+    _previewUpdaters.forEach(fn => fn());
 }
 
 // Global list of updatePreview callbacks so radio change can trigger them all
@@ -175,7 +180,7 @@ function onProcessClick() {
         .then(function (r) {
             var contentType = r.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
-                if (r.status === 413) throw new Error('Archivo(s) demasiado grandes. Máximo 100MB.');
+                if (r.status === 413) throw new Error('Archivo(s) demasiado grandes. Máximo 500MB.');
                 throw new Error('Error del servidor (' + r.status + '). Intenta de nuevo.');
             }
             return r.json().then(function (data) { return { ok: r.ok, data: data }; });
@@ -183,8 +188,8 @@ function onProcessClick() {
         .then(function (_) {
             var ok = _.ok, data = _.data;
             if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
-            autoSelectFormat(data.results);
             displayResults(data.results, data.session_id);
+            autoSelectFormat(data.results);
         })
         .catch(function (err) { alert('Error: ' + (err.message || err)); })
         .finally(function () {
@@ -199,25 +204,6 @@ function displayResults(resultsData, sessionId) {
     resultsContent.innerHTML = '';
     resultsContent.dataset.sessionId = sessionId || '';
     _previewUpdaters.length = 0;
-
-    // Insert format selector at top of results
-    const fmt = getSelectedFormat();
-    const formatDiv = document.createElement('div');
-    formatDiv.className = 'format-selector';
-    formatDiv.id = 'formatSelector';
-    formatDiv.innerHTML = `
-        <span class="format-label">Formato de nombre:</span>
-        <label class="format-option"><input type="radio" name="format" value="hudbay" ${fmt === 'hudbay' ? 'checked' : ''}> Hudbay</label>
-        <label class="format-option"><input type="radio" name="format" value="standard" ${fmt === 'standard' ? 'checked' : ''}> Estándar</label>
-    `;
-    resultsContent.appendChild(formatDiv);
-
-    // Wire radio change -> update all previews
-    formatDiv.querySelectorAll('input[name="format"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            _previewUpdaters.forEach(fn => fn());
-        });
-    });
 
     resultsData.forEach(result => {
         const div = document.createElement('div');
@@ -279,6 +265,12 @@ function displayResults(resultsData, sessionId) {
                 </div>
             </div>
 
+            <div class="format-selector">
+                <span class="format-label">Formato:</span>
+                <label class="format-option"><input type="radio" name="format" value="hudbay" checked> Hudbay</label>
+                <label class="format-option"><input type="radio" name="format" value="standard"> Estándar</label>
+            </div>
+
             <div class="preview-block">
                 <div class="preview-label">Nombre final</div>
                 <div class="result-suggested" data-role="preview"></div>
@@ -333,6 +325,18 @@ function displayResults(resultsData, sessionId) {
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
         };
         _previewUpdaters.push(updatePreview);
+
+        // format radio -> sync all cards and update all previews
+        div.querySelectorAll('input[name="format"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const val = radio.value;
+                // sync all other cards' radios
+                document.querySelectorAll('input[name="format"]').forEach(r => {
+                    r.checked = (r.value === val);
+                });
+                _previewUpdaters.forEach(fn => fn());
+            });
+        });
 
         // select -> input
         div.querySelectorAll('[data-field-select]').forEach(sel => {

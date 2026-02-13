@@ -29,7 +29,7 @@ app = Flask(
     static_folder=str(STATIC_DIR),
     static_url_path="/static",
 )
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
 app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
