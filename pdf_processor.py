@@ -357,7 +357,7 @@ class PDFProcessor:
     }
 
     def _clean_person_name(self, raw: str) -> str:
-        """Clean a raw person name: remove noise words, limit to 4 words."""
+        """Clean a raw person name: remove noise words, limit to 5 words."""
         words = self._clean_spaces(raw).split()
         clean = []
         for w in words:
@@ -369,7 +369,7 @@ class PDFProcessor:
             if w_upper.isdigit():
                 break
             clean.append(w_upper)
-            if len(clean) >= 4:
+            if len(clean) >= 5:
                 break
         return " ".join(clean)
 

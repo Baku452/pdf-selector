@@ -103,38 +103,25 @@ function dateToShort(value) {
     return `${dd}.${mm}.${yy}`;
 }
 
-function getSelectedFormat() {
-    const checked = document.querySelector('input[name="format"]:checked');
-    return checked ? checked.value : 'hudbay';
-}
-
-function autoSelectFormat(resultsData) {
-    // Use the first file's detected format to auto-select all radio buttons
-    let fmt = null;
-    for (const r of resultsData) {
-        if (r.detected_format) {
-            fmt = r.detected_format;
-            break;
-        }
+function getSelectedFormat(cardEl) {
+    if (cardEl) {
+        const checked = cardEl.querySelector('input[name^="format_"]:checked');
+        if (checked) return checked.value;
     }
-    if (!fmt) return;
-    document.querySelectorAll('input[name="format"]').forEach(r => {
-        r.checked = (r.value === fmt);
-    });
-    _previewUpdaters.forEach(fn => fn());
+    return 'standard';
 }
 
 // Global list of updatePreview callbacks so radio change can trigger them all
 const _previewUpdaters = [];
 
-function buildFinalFilename(fields, include, format) {
+function buildFinalFilename(fields, include, format, cardEl) {
     const dni = (fields.dni || '').trim();
     const nombre = (fields.nombre || '').trim().toUpperCase();
     const empresa = (fields.empresa || '').trim().toUpperCase();
     const tipoRaw = (fields.tipo_examen || '').trim().toUpperCase();
     const tipoAbbr = EXAM_TYPE_ABBR[tipoRaw] || tipoRaw;
     const fecha = dateToShort(fields.fecha);
-    const fmt = format || getSelectedFormat();
+    const fmt = format || getSelectedFormat(cardEl);
 
     if (fmt === 'standard') {
         // Standard: DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-FECHA.pdf
@@ -189,7 +176,6 @@ function onProcessClick() {
             var ok = _.ok, data = _.data;
             if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
             displayResults(data.results, data.session_id);
-            autoSelectFormat(data.results);
         })
         .catch(function (err) { alert('Error: ' + (err.message || err)); })
         .finally(function () {
@@ -267,8 +253,8 @@ function displayResults(resultsData, sessionId) {
 
             <div class="format-selector">
                 <span class="format-label">Formato:</span>
-                <label class="format-option"><input type="radio" name="format" value="hudbay" checked> Hudbay</label>
-                <label class="format-option"><input type="radio" name="format" value="standard"> Estándar</label>
+                <label class="format-option"><input type="radio" name="format_${result.file_index}" value="hudbay" ${(result.detected_format === 'hudbay') ? 'checked' : ''}> Hudbay</label>
+                <label class="format-option"><input type="radio" name="format_${result.file_index}" value="standard" ${(result.detected_format !== 'hudbay') ? 'checked' : ''}> Estándar</label>
             </div>
 
             <div class="preview-block">
@@ -321,20 +307,15 @@ function displayResults(resultsData, sessionId) {
             const previewEl = div.querySelector('[data-role="preview"]');
             const fields = getFields();
             syncIncludeFromUI();
-            const name = buildFinalFilename(fields, include);
+            const name = buildFinalFilename(fields, include, null, div);
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
         };
         _previewUpdaters.push(updatePreview);
 
-        // format radio -> sync all cards and update all previews
-        div.querySelectorAll('input[name="format"]').forEach(radio => {
+        // format radio -> update only this card's preview
+        div.querySelectorAll('input[name^="format_"]').forEach(radio => {
             radio.addEventListener('change', () => {
-                const val = radio.value;
-                // sync all other cards' radios
-                document.querySelectorAll('input[name="format"]').forEach(r => {
-                    r.checked = (r.value === val);
-                });
-                _previewUpdaters.forEach(fn => fn());
+                updatePreview();
             });
         });
 
