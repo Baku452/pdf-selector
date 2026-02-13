@@ -67,10 +67,10 @@ http://localhost:5001
      pip install pyinstaller pywebview
      pyinstaller pdfnamesetter.spec
      ```
-   - El ejecutable queda en `dist\PDFNameSetter.exe`.
+   - El ejecutable queda en `dist\PDF_Renombrar_Archivos.exe`.
 
 2. **Qué enviar**
-   - Envía el archivo **`PDFNameSetter.exe`** (carpeta `dist\`).
+   - Envía el archivo **`PDF_Renombrar_Archivos.exe`** (carpeta `dist\`).
    - **IMPORTANTE**: Con el nuevo método de build, Tesseract y Poppler están incluidos dentro del .exe.
    - La otra persona **NO necesita** tener Python, Tesseract o Poppler instalados.
 
@@ -79,7 +79,7 @@ http://localhost:5001
    - **Nada más** - todas las dependencias están incluidas en el .exe.
 
 4. **Cómo probar**
-   - Doble clic en `PDFNameSetter.exe`.
+   - Doble clic en `PDF_Renombrar_Archivos.exe`.
    - Se abre una ventana de la aplicación automáticamente.
    - Sube PDFs, ajusta nombres y usa **Descargar PDF** o **Descargar todos (ZIP)**.
 
@@ -126,7 +126,7 @@ The spec file will automatically bundle:
 - Poppler executables and DLLs
 
 Then run:
-- `dist\\PDFNameSetter.exe`
+- `dist\\PDF_Renombrar_Archivos.exe`
 
 **Troubleshooting**:
 - If OCR doesn't work, check that Tesseract and Poppler paths are correct before building
@@ -147,7 +147,7 @@ En **Vercel** todo corre en **funciones serverless**: no hay proceso largo, no h
 ### Opciones recomendadas
 
 1. **Usar la app en local o con .exe**  
-   - `python run_web.py` o el `PDFNameSetter.exe` en Windows.
+   - `python run_web.py` o el `PDF_Renombrar_Archivos.exe` en Windows.
 
 2. **Desplegar en un VPS o PaaS con soporte Python completo**  
    - **Railway**, **Render**, **Fly.io**, **PythonAnywhere**, etc.  
@@ -176,7 +176,7 @@ The application:
 ## Project Structure
 
 ```
-PDFNameSetter/
+PDF_Renombrar_Archivos/
 ├── app.py                    # Flask web application
 ├── run_web.py                # Entry point (opens browser)
 ├── pdf_renamer.py           # Original CLI version

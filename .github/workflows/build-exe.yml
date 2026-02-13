@@ -73,21 +73,21 @@ jobs:
       - name: Verify bundled files
         run: |
           Write-Host "=== Built EXE size ==="
-          Get-ChildItem dist\PDFNameSetter.exe | Format-Table Name, Length
+          Get-ChildItem dist\PDF_Renombrar_Archivos.exe | Format-Table Name, Length
           Write-Host "=== EXE size in MB ==="
-          $size = (Get-Item dist\PDFNameSetter.exe).Length / 1MB
+          $size = (Get-Item dist\PDF_Renombrar_Archivos.exe).Length / 1MB
           Write-Host "$size MB"
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PDFNameSetter-Windows
-          path: dist/PDFNameSetter.exe
+          name: PDF_Renombrar_Archivos-Windows
+          path: dist/PDF_Renombrar_Archivos.exe
           retention-days: 30
 
       - name: Create Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/PDFNameSetter.exe
+          files: dist/PDF_Renombrar_Archivos.exe
           generate_release_notes: true

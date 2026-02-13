@@ -55,7 +55,7 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo ==========================================
     echo   Build completed successfully!
-    echo   Executable location: dist\PDFNameSetter.exe
+    echo   Executable location: dist\PDF_Renombrar_Archivos.exe
     echo ==========================================
 ) else (
     echo.
