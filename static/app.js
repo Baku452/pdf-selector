@@ -498,7 +498,8 @@ function renderFieldRow(label, field, options, defaultValue, { required }) {
     const optHtml = safeOptions.length
         ? safeOptions.map(v => {
             const display = field === 'tipo_examen' ? examTypeDisplayLabel(v) : v;
-            return `<option value="${escapeHtml(v)}">${escapeHtml(display)}</option>`;
+            const sel = (v === defaultValue) ? ' selected' : '';
+            return `<option value="${escapeHtml(v)}"${sel}>${escapeHtml(display)}</option>`;
         }).join('')
         : `<option value="">(no encontrado)</option>`;
 
