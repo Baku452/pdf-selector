@@ -196,7 +196,7 @@ def download_zip():
     return send_file(
         buf,
         as_attachment=True,
-        download_name='PDFNameSetter_descargas.zip',
+        download_name='CAMBIO_NOMBRE_descargas.zip',
         mimetype='application/zip',
     )
 
@@ -255,7 +255,7 @@ class Api:
 
         result = windows[0].create_file_dialog(
             webview.SAVE_DIALOG,
-            save_filename='PDFNameSetter_descargas.zip',
+            save_filename='CAMBIO_NOMBRE_descargas.zip',
             file_types=('ZIP Files (*.zip)',),
         )
 
@@ -289,7 +289,7 @@ if __name__ == '__main__':
         t = threading.Thread(target=start_server, args=(port,), daemon=True)
         t.start()
         webview.create_window(
-            'PDFNameSetter',
+            'PDF_Renombrar_Archivos',
             f'http://localhost:{port}',
             width=1100,
             height=750,

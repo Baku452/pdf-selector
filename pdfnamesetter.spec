@@ -71,7 +71,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PDFNameSetter',
+    name='PDF_Renombrar_Archivos',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

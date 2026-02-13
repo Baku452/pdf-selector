@@ -475,7 +475,7 @@ function displayResults(resultsData, sessionId) {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'PDFNameSetter_descargas.zip';
+                a.download = 'CAMBIO_NOMBRE_descargas.zip';
                 a.rel = 'noopener';
                 a.click();
                 URL.revokeObjectURL(url);
