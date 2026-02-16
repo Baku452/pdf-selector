@@ -7,11 +7,18 @@ Core functionality for extracting information from PDFs
 import os
 import sys
 import re
+import base64
+import io
 
 try:
     import fitz  # pymupdf
 except ImportError:
     fitz = None
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 try:
     import pytesseract
@@ -135,8 +142,16 @@ class PDFProcessor:
                     print(f"  [OK] PDF convertido a {len(images)} imagenes")
 
                 # Then apply OCR to each image (requires Tesseract)
+                # Prefer Spanish for ñ/accents; fall back to eng if spa unavailable
+                ocr_lang = "spa+eng"
+                try:
+                    available = pytesseract.get_languages()
+                    if "spa" not in available:
+                        ocr_lang = "eng"
+                except Exception:
+                    pass
                 for i, image in enumerate(images):
-                    ocr_text = pytesseract.image_to_string(image, lang="spa+eng")
+                    ocr_text = pytesseract.image_to_string(image, lang=ocr_lang)
                     text += ocr_text
                     if verbose:
                         print(f"  [OK] OCR pagina {i+1}: {len(ocr_text)} caracteres extraidos")
@@ -976,6 +991,453 @@ class PDFProcessor:
                 parts["company"] = " ".join(company_words)
 
         return parts
+
+    # Field highlight colors
+    _FIELD_COLORS = {
+        'dni': '#ff6b6b',
+        'nombre': '#4ecdc4',
+        'empresa': '#45b7d1',
+        'tipo_examen': '#f7b731',
+        'fecha': '#5f27cd',
+    }
+
+    MAX_PREVIEW_PAGES = 5  # Limit pages available via on-demand loading
+
+    def generate_preview_single_page(self, pdf_path, defaults, page_num=0, max_width=500):
+        """Render a single PDF page as JPEG and find bounding boxes for field values.
+
+        Returns dict with 'page' (image, width, height, highlights, page number)
+        plus 'total_pages' count for pagination UI.
+        """
+        if not defaults:
+            defaults = {}
+
+        result = self._preview_digital_single(pdf_path, defaults, page_num, max_width)
+        if result is None:
+            result = self._preview_ocr_single(pdf_path, defaults, page_num, max_width)
+        return result
+
+    def generate_preview_with_highlights(self, pdf_path, defaults, max_width=500):
+        """Render PDF pages as images and find bounding boxes for field values.
+
+        Returns dict with 'pages' list plus 'total_pages' count.
+        Limited to MAX_PREVIEW_PAGES for performance.
+        """
+        if not defaults:
+            defaults = {}
+
+        # Try digital first, fall back to OCR
+        result = self._preview_digital_pdf(pdf_path, defaults, max_width)
+        if result is None:
+            result = self._preview_ocr_pdf(pdf_path, defaults, max_width)
+        return result
+
+    def _preview_digital_single(self, pdf_path, defaults, page_num, max_width):
+        """Render a single page using PyMuPDF."""
+        if fitz is None:
+            return None
+        try:
+            doc = fitz.open(pdf_path)
+            total = len(doc)
+            if page_num >= total:
+                doc.close()
+                return None
+
+            page = doc[page_num]
+            # For page 0, check if it's a digital PDF
+            if page_num == 0 and len(page.get_text().strip()) < 50:
+                doc.close()
+                return None
+
+            page_rect = page.rect
+            zoom = max_width / page_rect.width
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+
+            pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            buf = io.BytesIO()
+            pil_img.save(buf, format='JPEG', quality=75)
+            img_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+
+            highlights = self._find_highlights_digital(page, defaults, zoom)
+            capped_total = min(total, self.MAX_PREVIEW_PAGES)
+            doc.close()
+
+            return {
+                'page': {
+                    'image': f'data:image/jpeg;base64,{img_b64}',
+                    'width': pix.width,
+                    'height': pix.height,
+                    'highlights': highlights,
+                    'page': page_num + 1,
+                },
+                'total_pages': capped_total,
+            }
+        except Exception:
+            return None
+
+    def _preview_ocr_single(self, pdf_path, defaults, page_num, max_width):
+        """Render a single page using pdf2image + pytesseract."""
+        if convert_from_path is None or pytesseract is None or Image is None:
+            return None
+        try:
+            images = convert_from_path(
+                pdf_path,
+                first_page=page_num + 1,
+                last_page=page_num + 1,
+                poppler_path=_POPPLER_PATH,
+            )
+            if not images:
+                return None
+
+            # Get total page count
+            if fitz is not None:
+                doc = fitz.open(pdf_path)
+                total = min(len(doc), self.MAX_PREVIEW_PAGES)
+                doc.close()
+            else:
+                total = page_num + 1  # can't know total without fitz
+
+            orig_img = images[0]
+            img = orig_img.copy()
+            orig_w, orig_h = img.size
+            if orig_w > max_width:
+                scale = max_width / orig_w
+                new_h = int(orig_h * scale)
+                img = img.resize((max_width, new_h), Image.LANCZOS)
+            img_width, img_height = img.size
+            scale_x = img_width / orig_w
+            scale_y = img_height / orig_h
+
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=75)
+            img_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+
+            # OCR language detection
+            ocr_lang = "spa+eng"
+            try:
+                available = pytesseract.get_languages()
+                if "spa" not in available:
+                    ocr_lang = "eng"
+            except Exception:
+                pass
+
+            ocr_data = pytesseract.image_to_data(
+                orig_img, lang=ocr_lang, output_type=pytesseract.Output.DICT
+            )
+            highlights = self._find_highlights_ocr(ocr_data, defaults, scale_x, scale_y)
+
+            return {
+                'page': {
+                    'image': f'data:image/jpeg;base64,{img_b64}',
+                    'width': img_width,
+                    'height': img_height,
+                    'highlights': highlights,
+                    'page': page_num + 1,
+                },
+                'total_pages': total,
+            }
+        except Exception:
+            return None
+
+    def _find_highlights_digital(self, page, defaults, zoom):
+        """Find bounding boxes for field values in a digital PDF page."""
+        highlights = []
+        for field, value in defaults.items():
+            if not value or field not in self._FIELD_COLORS:
+                continue
+            val_str = str(value)
+            rects = page.search_for(val_str)
+            if not rects:
+                normalized = self._normalize_for_search(val_str)
+                if normalized != val_str:
+                    rects = page.search_for(normalized)
+            # Fallback: search for first word only
+            if not rects and ' ' in val_str:
+                first_word = val_str.split()[0]
+                rects = page.search_for(first_word)
+            for rect in rects:
+                w = (rect.x1 - rect.x0) * zoom
+                h = (rect.y1 - rect.y0) * zoom
+                if w > 1 and h > 1:  # Skip degenerate rectangles
+                    highlights.append({
+                        'field': field,
+                        'color': self._FIELD_COLORS[field],
+                        'x': rect.x0 * zoom,
+                        'y': rect.y0 * zoom,
+                        'w': w,
+                        'h': h,
+                    })
+        return highlights
+
+    def _find_highlights_ocr(self, ocr_data, defaults, scale_x, scale_y):
+        """Find bounding boxes for field values in OCR data."""
+        highlights = []
+        words = ocr_data.get('text', [])
+        lefts = ocr_data.get('left', [])
+        tops = ocr_data.get('top', [])
+        widths = ocr_data.get('width', [])
+        heights = ocr_data.get('height', [])
+        n = len(words)
+
+        for field, value in defaults.items():
+            if not value or field not in self._FIELD_COLORS:
+                continue
+            value_str = str(value).upper()
+            value_norm = self._normalize_for_search(value_str)
+            # Also try matching individual words for multi-word values
+            value_words = value_str.split()
+            found = False
+
+            for i in range(n):
+                if found:
+                    break
+                w_i = (words[i] or '').strip()
+                if not w_i:
+                    continue
+
+                # Try concatenating words i..j to match the full value
+                concat = ''
+                matched_indices = []
+                for j in range(i, min(i + 12, n)):
+                    w_j = (words[j] or '').strip()
+                    if not w_j:
+                        continue
+                    concat = (concat + ' ' + w_j).strip() if concat else w_j
+                    matched_indices.append(j)
+                    concat_upper = concat.upper()
+                    concat_norm = self._normalize_for_search(concat_upper)
+                    if value_str in concat_upper or value_norm in concat_norm:
+                        # Compute bounding box from matched word indices only
+                        x0 = min(lefts[k] for k in matched_indices)
+                        y0 = min(tops[k] for k in matched_indices)
+                        x1 = max(lefts[k] + widths[k] for k in matched_indices)
+                        y1 = max(tops[k] + heights[k] for k in matched_indices)
+                        w = x1 - x0
+                        h = y1 - y0
+                        # Only add if dimensions are valid
+                        if w > 2 and h > 2:
+                            highlights.append({
+                                'field': field,
+                                'color': self._FIELD_COLORS[field],
+                                'x': x0 * scale_x,
+                                'y': y0 * scale_y,
+                                'w': w * scale_x,
+                                'h': h * scale_y,
+                            })
+                        found = True
+                        break
+
+            # Fallback: if full value not found, try matching the first word
+            if not found and len(value_words) >= 2:
+                first_word = value_words[0]
+                first_norm = self._normalize_for_search(first_word)
+                for i in range(n):
+                    w_i = (words[i] or '').strip().upper()
+                    if not w_i:
+                        continue
+                    w_i_norm = self._normalize_for_search(w_i)
+                    if w_i == first_word or w_i_norm == first_norm:
+                        # Found start word — span from here for len(value_words) words
+                        matched_indices = []
+                        for j in range(i, min(i + len(value_words) + 3, n)):
+                            w_j = (words[j] or '').strip()
+                            if w_j:
+                                matched_indices.append(j)
+                            if len(matched_indices) >= len(value_words):
+                                break
+                        if matched_indices:
+                            x0 = min(lefts[k] for k in matched_indices)
+                            y0 = min(tops[k] for k in matched_indices)
+                            x1 = max(lefts[k] + widths[k] for k in matched_indices)
+                            y1 = max(tops[k] + heights[k] for k in matched_indices)
+                            w = x1 - x0
+                            h = y1 - y0
+                            if w > 2 and h > 2:
+                                highlights.append({
+                                    'field': field,
+                                    'color': self._FIELD_COLORS[field],
+                                    'x': x0 * scale_x,
+                                    'y': y0 * scale_y,
+                                    'w': w * scale_x,
+                                    'h': h * scale_y,
+                                })
+                        break
+
+        return highlights
+
+    @staticmethod
+    def _normalize_for_search(value):
+        """Normalize a string for fuzzy matching: strip accents for comparison."""
+        import unicodedata
+        nfkd = unicodedata.normalize('NFKD', str(value))
+        return ''.join(c for c in nfkd if not unicodedata.combining(c))
+
+    def _preview_digital_pdf(self, pdf_path, defaults, max_width):
+        """Use PyMuPDF to render all pages and search for field values."""
+        if fitz is None:
+            return None
+        try:
+            doc = fitz.open(pdf_path)
+            total = len(doc)
+            if total == 0:
+                doc.close()
+                return None
+
+            # Check first page for enough text (digital PDF check)
+            first_text = doc[0].get_text()
+            if len(first_text.strip()) < 50:
+                doc.close()
+                return None
+
+            pages = []
+            render_count = min(total, self.MAX_PREVIEW_PAGES)
+            for page_num in range(render_count):
+                page = doc[page_num]
+                page_rect = page.rect
+                zoom = max_width / page_rect.width
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                # Convert to JPEG for smaller payload
+                pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                buf = io.BytesIO()
+                pil_img.save(buf, format='JPEG', quality=75)
+                img_bytes = buf.getvalue()
+                img_b64 = base64.b64encode(img_bytes).decode('ascii')
+
+                # Find bounding boxes for each field value
+                highlights = []
+                for field, value in defaults.items():
+                    if not value or field not in self._FIELD_COLORS:
+                        continue
+                    val_str = str(value)
+                    # Try exact search first, then without accents (ñ -> n fallback)
+                    rects = page.search_for(val_str)
+                    if not rects:
+                        normalized = self._normalize_for_search(val_str)
+                        if normalized != val_str:
+                            rects = page.search_for(normalized)
+                    for rect in rects:
+                        highlights.append({
+                            'field': field,
+                            'color': self._FIELD_COLORS[field],
+                            'x': rect.x0 * zoom,
+                            'y': rect.y0 * zoom,
+                            'w': (rect.x1 - rect.x0) * zoom,
+                            'h': (rect.y1 - rect.y0) * zoom,
+                        })
+
+                pages.append({
+                    'image': f'data:image/jpeg;base64,{img_b64}',
+                    'width': pix.width,
+                    'height': pix.height,
+                    'highlights': highlights,
+                    'page': page_num + 1,
+                })
+
+            doc.close()
+            return {'pages': pages, 'total_pages': total}
+        except Exception:
+            return None
+
+    def _preview_ocr_pdf(self, pdf_path, defaults, max_width):
+        """Use pdf2image + pytesseract for scanned PDFs."""
+        if convert_from_path is None or pytesseract is None or Image is None:
+            return None
+        try:
+            images = convert_from_path(
+                pdf_path,
+                first_page=1,
+                last_page=self.MAX_PREVIEW_PAGES,
+                poppler_path=_POPPLER_PATH,
+            )
+            if not images:
+                return None
+
+            # Detect OCR language
+            ocr_lang = "spa+eng"
+            try:
+                available = pytesseract.get_languages()
+                if "spa" not in available:
+                    ocr_lang = "eng"
+            except Exception:
+                pass
+
+            pages = []
+            for page_num, orig_img in enumerate(images):
+                img = orig_img.copy()
+                orig_w, orig_h = img.size
+                if orig_w > max_width:
+                    scale = max_width / orig_w
+                    new_h = int(orig_h * scale)
+                    img = img.resize((max_width, new_h), Image.LANCZOS)
+                img_width, img_height = img.size
+                scale_x = img_width / orig_w
+                scale_y = img_height / orig_h
+
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=75)
+                img_bytes = buf.getvalue()
+                img_b64 = base64.b64encode(img_bytes).decode('ascii')
+
+                # OCR with bounding box data on original-size image
+                ocr_data = pytesseract.image_to_data(
+                    orig_img, lang=ocr_lang, output_type=pytesseract.Output.DICT
+                )
+
+                highlights = []
+                for field, value in defaults.items():
+                    if not value or field not in self._FIELD_COLORS:
+                        continue
+                    value_str = str(value).upper()
+                    value_norm = self._normalize_for_search(value_str)
+                    words = ocr_data.get('text', [])
+                    n = len(words)
+                    found = False
+                    for i in range(n):
+                        if found:
+                            break
+                        if not words[i]:
+                            continue
+                        concat = ''
+                        for j in range(i, min(i + 10, n)):
+                            w = (words[j] or '').strip()
+                            if not w:
+                                continue
+                            concat = (concat + ' ' + w).strip() if concat else w
+                            concat_upper = concat.upper()
+                            concat_norm = self._normalize_for_search(concat_upper)
+                            if value_str in concat_upper or value_norm in concat_norm:
+                                x0 = ocr_data['left'][i]
+                                y0 = ocr_data['top'][i]
+                                x1 = ocr_data['left'][j] + ocr_data['width'][j]
+                                y1 = max(
+                                    ocr_data['top'][k] + ocr_data['height'][k]
+                                    for k in range(i, j + 1)
+                                    if (words[k] or '').strip()
+                                )
+                                highlights.append({
+                                    'field': field,
+                                    'color': self._FIELD_COLORS[field],
+                                    'x': x0 * scale_x,
+                                    'y': y0 * scale_y,
+                                    'w': (x1 - x0) * scale_x,
+                                    'h': (y1 - y0) * scale_y,
+                                })
+                                found = True
+                                break
+
+                pages.append({
+                    'image': f'data:image/jpeg;base64,{img_b64}',
+                    'width': img_width,
+                    'height': img_height,
+                    'highlights': highlights,
+                    'page': page_num + 1,
+                })
+
+            return {'pages': pages, 'total_pages': len(images)}
+        except Exception:
+            return None
 
     def generate_filename_parts(
         self, pdf_path, verbose=False, original_filename=None

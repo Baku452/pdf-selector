@@ -10,6 +10,7 @@ import shutil
 import zipfile
 import io
 import uuid
+import json
 import threading
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
@@ -123,6 +124,14 @@ def upload_pdf():
                 "detected_format": analysis.get("detected_format"),
             }
             results.append(result)
+
+            # Cache defaults for fast preview generation
+            cache_path = session_path / f"{file_index}.defaults.json"
+            try:
+                cache_path.write_text(json.dumps(analysis.get("defaults", {})))
+            except Exception:
+                pass
+
             file_index += 1
 
         except Exception as e:
@@ -134,6 +143,48 @@ def upload_pdf():
             })
 
     return jsonify({'session_id': session_id, 'results': results})
+
+
+@app.route('/api/preview/<session_id>/<int:file_index>')
+def preview_pdf(session_id, file_index):
+    """Return rendered page(s) with highlight bounding boxes.
+
+    Query params:
+      page (int, default 0) — 0-based page index to render (single page mode)
+    Returns first page quickly; frontend requests additional pages on demand.
+    """
+    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    pdf_path = session_path / f"{file_index}.pdf"
+    if not pdf_path.is_file():
+        return jsonify({'success': False, 'error': 'File not found'}), 404
+
+    req_page = request.args.get('page', None)
+
+    # Load cached defaults (saved during upload) to avoid re-analyzing
+    cache_path = session_path / f"{file_index}.defaults.json"
+    if cache_path.is_file():
+        try:
+            defaults = json.loads(cache_path.read_text())
+        except Exception:
+            defaults = {}
+    else:
+        # Fallback: re-analyze (slow)
+        analysis = processor.analyze(str(pdf_path), verbose=False)
+        defaults = analysis.get('defaults', {})
+
+    if req_page is not None:
+        # Single-page mode: render just one page
+        page_num = int(req_page)
+        result = processor.generate_preview_single_page(str(pdf_path), defaults, page_num)
+        if result is None:
+            return jsonify({'success': False, 'error': 'Could not generate preview'}), 500
+        return jsonify({'success': True, **result})
+    else:
+        # First request: return page 1 + total page count
+        result = processor.generate_preview_single_page(str(pdf_path), defaults, 0)
+        if result is None:
+            return jsonify({'success': False, 'error': 'Could not generate preview'}), 500
+        return jsonify({'success': True, **result})
 
 
 @app.route('/api/download/<session_id>/<int:file_index>')

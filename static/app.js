@@ -218,6 +218,15 @@ function displayResults(resultsData, sessionId) {
         const icon = result.success ? '✅' : '⚠️';
         const iconClass = result.success ? 'success-icon' : 'warn-icon';
 
+        const FIELD_COLORS = {
+            dni: '#ff6b6b',
+            nombre: '#4ecdc4',
+            empresa: '#45b7d1',
+            tipo_examen: '#f7b731',
+            fecha: '#5f27cd',
+        };
+        const FIELD_LABELS = { dni: 'DNI', nombre: 'Nombre', empresa: 'Empresa', tipo_examen: 'Tipo', fecha: 'Fecha' };
+
         div.innerHTML = `
             <div class="result-header">
                 <span class="${iconClass}">${icon}</span>
@@ -230,38 +239,61 @@ function displayResults(resultsData, sessionId) {
                 </div>
             ` : ''}
 
-            <div class="builder-grid">
-                ${renderBuilderHeader()}
-                ${renderFieldRow('DNI', 'dni', candidates.dni || [], defaults.dni || '', { required: true })}
-                ${renderFieldRow('Nombre', 'nombre', candidates.nombre || [], defaults.nombre || '', { required: false })}
-                ${renderFieldRow('Empresa', 'empresa', candidates.empresa || [], defaults.empresa || '', { required: false })}
-                ${renderFieldRow('Tipo de examen', 'tipo_examen', candidates.tipo_examen || [], defaults.tipo_examen || '', { required: false })}
-                ${renderFieldRow('Fecha evaluación', 'fecha', candidates.fecha || [], defaults.fecha || '', { required: false })}
-            </div>
+            <div class="result-content-split">
+                <div class="result-fields-panel">
+                    <div class="builder-grid">
+                        ${renderBuilderHeader()}
+                        ${renderFieldRow('DNI', 'dni', candidates.dni || [], defaults.dni || '', { required: true })}
+                        ${renderFieldRow('Nombre', 'nombre', candidates.nombre || [], defaults.nombre || '', { required: false })}
+                        ${renderFieldRow('Empresa', 'empresa', candidates.empresa || [], defaults.empresa || '', { required: false })}
+                        ${renderFieldRow('Tipo de examen', 'tipo_examen', candidates.tipo_examen || [], defaults.tipo_examen || '', { required: false })}
+                        ${renderFieldRow('Fecha evaluación', 'fecha', candidates.fecha || [], defaults.fecha || '', { required: false })}
+                    </div>
 
-            <div class="order-block">
-                <div class="order-label">Campos incluidos</div>
-                <div class="order-help">Activa o desactiva campos opcionales.</div>
-                <div class="order-list" data-role="order-list">
-                    ${(result.detected_format === 'hudbay'
-                        ? [['fecha','Fecha'],['tipo_examen','Tipo de examen'],['dni','DNI'],['nombre','Nombre'],['empresa','Empresa']]
-                        : [['dni','DNI'],['nombre','Nombre'],['empresa','Empresa'],['tipo_examen','Tipo de examen'],['fecha','Fecha']]
-                    ).map(([f,l]) => renderOrderItem(f, l, true, f === 'dni')).join('')}
+                    <div class="order-block">
+                        <div class="order-label">Campos incluidos</div>
+                        <div class="order-help">Activa o desactiva campos opcionales.</div>
+                        <div class="order-list" data-role="order-list">
+                            ${(result.detected_format === 'hudbay'
+                                ? [['fecha','Fecha'],['tipo_examen','Tipo de examen'],['dni','DNI'],['nombre','Nombre'],['empresa','Empresa']]
+                                : [['dni','DNI'],['nombre','Nombre'],['empresa','Empresa'],['tipo_examen','Tipo de examen'],['fecha','Fecha']]
+                            ).map(([f,l]) => renderOrderItem(f, l, true, f === 'dni')).join('')}
+                        </div>
+                    </div>
+
+                    <div class="format-selector">
+                        <span class="format-label">Formato:</span>
+                        <label class="format-option"><input type="radio" name="format_${result.file_index}" value="hudbay" ${(result.detected_format === 'hudbay') ? 'checked' : ''}> Hudbay</label>
+                        <label class="format-option"><input type="radio" name="format_${result.file_index}" value="standard" ${(result.detected_format !== 'hudbay') ? 'checked' : ''}> Estándar</label>
+                    </div>
+
+                    <div class="preview-block">
+                        <div class="preview-label">Nombre final</div>
+                        <div class="result-suggested" data-role="preview"></div>
+                        <div class="preview-actions">
+                            <button class="btn btn-secondary btn-small" data-action="copy">Copiar</button>
+                            ${result.file_index != null ? `<button class="btn btn-primary btn-small" data-action="download-one">Descargar PDF</button>` : ''}
+                        </div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="format-selector">
-                <span class="format-label">Formato:</span>
-                <label class="format-option"><input type="radio" name="format_${result.file_index}" value="hudbay" ${(result.detected_format === 'hudbay') ? 'checked' : ''}> Hudbay</label>
-                <label class="format-option"><input type="radio" name="format_${result.file_index}" value="standard" ${(result.detected_format !== 'hudbay') ? 'checked' : ''}> Estándar</label>
-            </div>
-
-            <div class="preview-block">
-                <div class="preview-label">Nombre final</div>
-                <div class="result-suggested" data-role="preview"></div>
-                <div class="preview-actions">
-                    <button class="btn btn-secondary btn-small" data-action="copy">Copiar</button>
-                    ${result.file_index != null ? `<button class="btn btn-primary btn-small" data-action="download-one">Descargar PDF</button>` : ''}
+                <div class="result-preview-panel" data-role="pdf-preview">
+                    <div class="preview-toolbar">
+                        <button class="preview-tool-btn" data-action="zoom-out" title="Alejar">-</button>
+                        <span class="preview-zoom-label">100%</span>
+                        <button class="preview-tool-btn" data-action="zoom-in" title="Acercar">+</button>
+                        <span class="preview-page-info">Pag <span data-role="current-page">1</span> / <span data-role="total-pages">1</span></span>
+                    </div>
+                    <div class="preview-scroll-container">
+                        <div class="preview-pages-wrap" data-role="pages-wrap">
+                            <div class="preview-loading">Cargando vista previa...</div>
+                        </div>
+                    </div>
+                    <div class="preview-legend">
+                        ${Object.entries(FIELD_COLORS).map(([f, c]) =>
+                            `<span class="legend-item" data-legend-field="${f}"><span class="legend-swatch" style="background:${c}"></span>${FIELD_LABELS[f]}</span>`
+                        ).join('')}
+                    </div>
                 </div>
             </div>
         `;
@@ -414,6 +446,200 @@ function displayResults(resultsData, sessionId) {
         }
 
         updatePreview();
+
+        // --- PDF preview with highlights, zoom, multi-page scroll ---
+        if (result.file_index != null) {
+            const previewPanel = div.querySelector('[data-role="pdf-preview"]');
+            const pagesWrap = previewPanel.querySelector('[data-role="pages-wrap"]');
+            const scrollContainer = previewPanel.querySelector('.preview-scroll-container');
+            const zoomLabel = previewPanel.querySelector('.preview-zoom-label');
+            const currentPageEl = previewPanel.querySelector('[data-role="current-page"]');
+            const totalPagesEl = previewPanel.querySelector('[data-role="total-pages"]');
+            let previewPages = null; // array of { image, width, height, highlights, page }
+            let activeField = null;
+            let zoomLevel = 1;
+            const ZOOM_STEP = 0.25;
+            const ZOOM_MIN = 0.5;
+            const ZOOM_MAX = 3;
+
+            const drawPageHighlights = (canvas, highlights, selectedField) => {
+                const ctx = canvas.getContext('2d');
+                const img = canvas._previewImg;
+                if (!img) return;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                highlights.forEach(h => {
+                    const isActive = selectedField === h.field;
+                    ctx.fillStyle = h.color + (isActive ? '60' : '25');
+                    ctx.fillRect(h.x, h.y, h.w, h.h);
+                    ctx.strokeStyle = h.color + (isActive ? 'ff' : '80');
+                    ctx.lineWidth = isActive ? 2.5 : 1.5;
+                    ctx.strokeRect(h.x, h.y, h.w, h.h);
+                });
+            };
+
+            const redrawAllHighlights = (selectedField) => {
+                if (!previewPages) return;
+                pagesWrap.querySelectorAll('canvas').forEach((canvas, i) => {
+                    if (previewPages[i]) {
+                        drawPageHighlights(canvas, previewPages[i].highlights, selectedField);
+                    }
+                });
+            };
+
+            const applyZoom = () => {
+                zoomLabel.textContent = Math.round(zoomLevel * 100) + '%';
+                pagesWrap.style.width = Math.round(zoomLevel * 100) + '%';
+            };
+
+            const updateCurrentPage = () => {
+                if (!previewPages || previewPages.length <= 1) return;
+                const canvases = pagesWrap.querySelectorAll('canvas');
+                const scrollTop = scrollContainer.scrollTop;
+                const containerTop = scrollContainer.getBoundingClientRect().top;
+                let closest = 1;
+                canvases.forEach((c, i) => {
+                    const rect = c.getBoundingClientRect();
+                    if (rect.top - containerTop < scrollContainer.clientHeight / 2) {
+                        closest = i + 1;
+                    }
+                });
+                currentPageEl.textContent = closest;
+            };
+
+            scrollContainer.addEventListener('scroll', updateCurrentPage);
+
+            // Zoom buttons
+            previewPanel.querySelector('[data-action="zoom-in"]').addEventListener('click', () => {
+                if (zoomLevel < ZOOM_MAX) { zoomLevel = Math.min(ZOOM_MAX, zoomLevel + ZOOM_STEP); applyZoom(); }
+            });
+            previewPanel.querySelector('[data-action="zoom-out"]').addEventListener('click', () => {
+                if (zoomLevel > ZOOM_MIN) { zoomLevel = Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP); applyZoom(); }
+            });
+
+            let totalPages = 1;
+            let loadedPages = new Set();
+
+            const addPageToWrap = (pg) => {
+                const canvasWrap = document.createElement('div');
+                canvasWrap.className = 'preview-canvas-wrap';
+                canvasWrap.dataset.pageNum = pg.page;
+                const pageLabel = document.createElement('div');
+                pageLabel.className = 'preview-page-label';
+                pageLabel.textContent = 'Pag ' + pg.page;
+                canvasWrap.appendChild(pageLabel);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = pg.width;
+                canvas.height = pg.height;
+                canvasWrap.appendChild(canvas);
+
+                // Insert in order
+                const existing = pagesWrap.querySelectorAll('.preview-canvas-wrap');
+                let inserted = false;
+                for (const el of existing) {
+                    if (parseInt(el.dataset.pageNum) > pg.page) {
+                        pagesWrap.insertBefore(canvasWrap, el);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) pagesWrap.appendChild(canvasWrap);
+
+                const img = new window.Image();
+                img.onload = () => {
+                    canvas._previewImg = img;
+                    drawPageHighlights(canvas, pg.highlights, activeField);
+                };
+                img.src = pg.image;
+
+                if (!previewPages) previewPages = [];
+                previewPages[pg.page - 1] = pg;
+                loadedPages.add(pg.page - 1);
+            };
+
+            const loadPage = (pageIdx) => {
+                if (loadedPages.has(pageIdx)) return;
+                loadedPages.add(pageIdx); // mark as loading
+                const sid = resultsContent.dataset.sessionId;
+                const idx = result.file_index;
+                fetch(`/api/preview/${sid}/${idx}?page=${pageIdx}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success && data.page) {
+                            addPageToWrap(data.page);
+                        }
+                    })
+                    .catch(() => {});
+            };
+
+            const loadPreview = () => {
+                if (previewPages) return;
+                const sid = resultsContent.dataset.sessionId;
+                const idx = result.file_index;
+                pagesWrap.innerHTML = '<div class="preview-loading">Cargando vista previa...</div>';
+
+                fetch(`/api/preview/${sid}/${idx}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (!data.success || !data.page) {
+                            pagesWrap.innerHTML = '<div class="preview-loading">Vista previa no disponible</div>';
+                            return;
+                        }
+                        totalPages = data.total_pages || 1;
+                        totalPagesEl.textContent = totalPages;
+                        pagesWrap.innerHTML = '';
+                        addPageToWrap(data.page);
+                    })
+                    .catch(() => {
+                        pagesWrap.innerHTML = '<div class="preview-loading">Error al cargar vista previa</div>';
+                    });
+            };
+
+            // Load next pages as user scrolls near the bottom
+            scrollContainer.addEventListener('scroll', () => {
+                updateCurrentPage();
+                const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+                if (scrollTop + clientHeight > scrollHeight - 150) {
+                    // Near bottom — load next unloaded page
+                    for (let p = 0; p < totalPages; p++) {
+                        if (!loadedPages.has(p)) {
+                            loadPage(p);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Lazy load with IntersectionObserver
+            if ('IntersectionObserver' in window) {
+                const obs = new IntersectionObserver((entries) => {
+                    if (entries[0].isIntersecting) {
+                        loadPreview();
+                        obs.disconnect();
+                    }
+                }, { rootMargin: '200px' });
+                obs.observe(previewPanel);
+            } else {
+                loadPreview();
+            }
+
+            // Wire focus/blur on field inputs and selects
+            div.querySelectorAll('[data-field-input], [data-field-select]').forEach(el => {
+                const field = el.getAttribute('data-field-input') || el.getAttribute('data-field-select');
+                el.addEventListener('focus', () => { activeField = field; redrawAllHighlights(field); });
+                el.addEventListener('blur', () => { activeField = null; redrawAllHighlights(null); });
+            });
+
+            // Legend click -> highlight that field
+            previewPanel.querySelectorAll('[data-legend-field]').forEach(el => {
+                el.addEventListener('click', () => {
+                    const f = el.getAttribute('data-legend-field');
+                    activeField = activeField === f ? null : f;
+                    redrawAllHighlights(activeField);
+                });
+            });
+        }
     });
 
     // "Descargar todos (ZIP)" button
