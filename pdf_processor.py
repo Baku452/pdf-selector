@@ -169,7 +169,7 @@ class PDFProcessor:
                         first_page=1,
                         last_page=3,
                         poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
-                    )  # Solo primeras 3 páginas
+                    )  # Solo primeras 3 páginas (fallback)
                 if verbose:
                     print(f"  [OK] PDF convertido a {len(images)} imagenes")
 
@@ -1138,7 +1138,7 @@ class PDFProcessor:
         'fecha': '#5f27cd',
     }
 
-    MAX_PREVIEW_PAGES = 5  # Limit pages available via on-demand loading
+    MAX_PREVIEW_PAGES = 1  # Only load the single page used for extraction
 
     def generate_preview_single_page(self, pdf_path, defaults, page_num=0, max_width=500):
         """Render a single PDF page as JPEG and find bounding boxes for field values.

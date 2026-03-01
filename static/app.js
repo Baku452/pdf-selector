@@ -561,6 +561,8 @@ function displayResults(resultsData, sessionId) {
                 if (zoomLevel > ZOOM_MIN) { zoomLevel = Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP); applyZoom(); }
             });
 
+            // Only load the single page used for data extraction
+            const extractPage = result.detected_format === 'standard' ? 1 : 0;
             let totalPages = 1;
             let loadedPages = new Set();
 
@@ -623,15 +625,15 @@ function displayResults(resultsData, sessionId) {
                 const idx = result.file_index;
                 pagesWrap.innerHTML = '<div class="preview-loading">Cargando vista previa...</div>';
 
-                fetch(`/api/preview/${sid}/${idx}`)
+                fetch(`/api/preview/${sid}/${idx}?page=${extractPage}`)
                     .then(r => r.json())
                     .then(data => {
                         if (!data.success || !data.page) {
                             pagesWrap.innerHTML = '<div class="preview-loading">Vista previa no disponible</div>';
                             return;
                         }
-                        totalPages = data.total_pages || 1;
-                        totalPagesEl.textContent = totalPages;
+                        totalPages = 1;
+                        totalPagesEl.textContent = 1;
                         pagesWrap.innerHTML = '';
                         addPageToWrap(data.page);
                     })
@@ -639,21 +641,6 @@ function displayResults(resultsData, sessionId) {
                         pagesWrap.innerHTML = '<div class="preview-loading">Error al cargar vista previa</div>';
                     });
             };
-
-            // Load next pages as user scrolls near the bottom
-            scrollContainer.addEventListener('scroll', () => {
-                updateCurrentPage();
-                const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-                if (scrollTop + clientHeight > scrollHeight - 150) {
-                    // Near bottom — load next unloaded page
-                    for (let p = 0; p < totalPages; p++) {
-                        if (!loadedPages.has(p)) {
-                            loadPage(p);
-                            break;
-                        }
-                    }
-                }
-            });
 
             // Lazy load with IntersectionObserver
             if ('IntersectionObserver' in window) {
