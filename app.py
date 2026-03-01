@@ -40,6 +40,9 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Allowed extensions
 ALLOWED_EXTENSIONS = {'pdf'}
 
+# In-memory store for Excel lookup dicts keyed by session_id
+_excel_lookups = {}
+
 
 def allowed_file(filename):
     return (
@@ -74,6 +77,37 @@ def _safe_download_filename(name):
     return ''.join(c for c in name if c.isalnum() or c in ' ._-()').strip() or 'documento.pdf'
 
 
+@app.route('/api/upload-excel', methods=['POST'])
+def upload_excel():
+    """Handle Excel reference file upload. Returns session id and entry count."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify({'error': 'Solo se aceptan archivos .xlsx'}), 400
+
+    excel_session = str(uuid.uuid4())
+    session_path = _session_dir(excel_session)
+    excel_path = session_path / 'reference.xlsx'
+    file.save(str(excel_path))
+
+    try:
+        lookup = processor.load_excel_reference(str(excel_path))
+        _excel_lookups[excel_session] = lookup
+        return jsonify({
+            'success': True,
+            'excel_session': excel_session,
+            'entries': len(lookup),
+            'filename': file.filename,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 @app.route('/api/upload', methods=['POST'])
 def upload_pdf():
     """Handle PDF upload and return suggested names. Keeps files for download."""
@@ -84,6 +118,10 @@ def upload_pdf():
 
     if not files or files[0].filename == '':
         return jsonify({'error': 'No files selected'}), 400
+
+    # Check for Excel reference session
+    excel_session = request.form.get('excel_session', '').strip()
+    excel_lookup = _excel_lookups.get(excel_session) if excel_session else None
 
     session_id = str(uuid.uuid4())
     session_path = _session_dir(session_id)
@@ -110,6 +148,7 @@ def upload_pdf():
                 str(filepath),
                 original_filename=file.filename,
                 verbose=True,  # Enable verbose for debugging
+                excel_lookup=excel_lookup,
             )
 
             result = {

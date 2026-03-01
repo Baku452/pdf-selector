@@ -9,6 +9,12 @@ import sys
 import re
 import base64
 import io
+import difflib
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
 
 try:
     import fitz  # pymupdf
@@ -107,16 +113,28 @@ class PDFProcessor:
         cleaned = re.sub(r"-{2,}", "-", cleaned)
         return cleaned.strip("-")
 
-    def extract_text_from_pdf(self, pdf_path, use_ocr=True, verbose=False):
-        """Extrae texto de PDF (digital o escaneado)"""
+    def extract_text_from_pdf(self, pdf_path, use_ocr=True, verbose=False, pages=None):
+        """Extrae texto de PDF (digital o escaneado).
+
+        Args:
+            pages: Optional list of 0-indexed page numbers to extract from.
+                   If None, extracts from all pages (original behavior).
+        """
         text = ""
 
         # Intenta extraer texto digital primero
         if fitz is not None:
             try:
                 doc = fitz.open(pdf_path)
-                for page in doc:
-                    text += page.get_text()
+                if pages is not None:
+                    for page_num in pages:
+                        if page_num < len(doc):
+                            text += doc[page_num].get_text()
+                    if verbose:
+                        print(f"  [INFO] Extrayendo texto digital de paginas: {[p+1 for p in pages]}")
+                else:
+                    for page in doc:
+                        text += page.get_text()
                 doc.close()
 
                 # Si hay suficiente texto, no necesita OCR
@@ -131,13 +149,27 @@ class PDFProcessor:
             if verbose:
                 print(f"  [OCR] Aplicando OCR (documento escaneado)...")
             try:
-                # First, try to convert PDF to images (requires Poppler)
-                images = convert_from_path(
-                    pdf_path,
-                    first_page=1,
-                    last_page=3,
-                    poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
-                )  # Solo primeras 3 páginas
+                if pages is not None:
+                    # Convert only specific pages
+                    images = []
+                    for page_num in pages:
+                        page_images = convert_from_path(
+                            pdf_path,
+                            first_page=page_num + 1,  # pdf2image uses 1-indexed
+                            last_page=page_num + 1,
+                            poppler_path=_POPPLER_PATH,
+                        )
+                        images.extend(page_images)
+                    if verbose:
+                        print(f"  [INFO] OCR de paginas: {[p+1 for p in pages]}")
+                else:
+                    # First, try to convert PDF to images (requires Poppler)
+                    images = convert_from_path(
+                        pdf_path,
+                        first_page=1,
+                        last_page=3,
+                        poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
+                    )  # Solo primeras 3 páginas
                 if verbose:
                     print(f"  [OK] PDF convertido a {len(images)} imagenes")
 
@@ -695,7 +727,87 @@ class PDFProcessor:
 
         return None
 
-    def analyze(self, pdf_path, original_filename=None, verbose=False):
+    @staticmethod
+    def load_excel_reference(excel_path):
+        """Load an Excel file and build a DNI -> paciente lookup dict.
+
+        Reads the 'CARGAS EN MEDIWEB' sheet and maps the 'documento' column
+        (DNI) to the 'paciente' column (corrected name).
+        Returns dict {dni_string: paciente_name}.
+        """
+        if load_workbook is None:
+            raise ImportError("openpyxl is required to read Excel files. Install with: pip install openpyxl")
+
+        wb = load_workbook(excel_path, read_only=True, data_only=True)
+
+        # Try the expected sheet name, fall back to first sheet
+        sheet_name = "CARGAS EN MEDIWEB"
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.active
+
+        # Find column indices from header row
+        header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+        headers = [str(h).strip().lower() if h else "" for h in header_row]
+
+        doc_idx = None
+        pac_idx = None
+        for i, h in enumerate(headers):
+            if "documento" in h or h == "dni":
+                doc_idx = i
+            if "paciente" in h or h == "nombre" or h == "name":
+                pac_idx = i
+
+        if doc_idx is None or pac_idx is None:
+            wb.close()
+            raise ValueError(
+                f"No se encontraron las columnas 'documento' y 'paciente' en el Excel. "
+                f"Columnas encontradas: {headers}"
+            )
+
+        lookup = {}
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            doc_val = row[doc_idx] if doc_idx < len(row) else None
+            pac_val = row[pac_idx] if pac_idx < len(row) else None
+            if doc_val and pac_val:
+                dni_key = str(doc_val).strip()
+                lookup[dni_key] = str(pac_val).strip()
+
+        wb.close()
+        return lookup
+
+    @staticmethod
+    def match_name_from_excel(extracted_name, dni, excel_lookup):
+        """Try to match a name from the Excel lookup by DNI.
+
+        If the DNI is found in excel_lookup and the similarity between
+        extracted_name and the Excel paciente is >= 0.80, returns the
+        Excel paciente value. Otherwise returns the original extracted_name.
+        """
+        if not excel_lookup or not dni:
+            return extracted_name
+
+        excel_name = excel_lookup.get(dni)
+        if not excel_name:
+            return extracted_name
+
+        # Compare similarity
+        if not extracted_name:
+            return excel_name
+
+        ratio = difflib.SequenceMatcher(
+            None,
+            extracted_name.upper(),
+            excel_name.upper(),
+        ).ratio()
+
+        if ratio >= 0.80:
+            return excel_name
+
+        return extracted_name
+
+    def analyze(self, pdf_path, original_filename=None, verbose=False, excel_lookup=None):
         """
         Analiza un PDF y devuelve candidatos + valores por defecto para armar el nombre en UI.
         """
@@ -703,7 +815,19 @@ class PDFProcessor:
             ocr_status = "disponible" if (pytesseract and convert_from_path) else "NO disponible"
             print(f"  [INFO] OCR {ocr_status}")
 
-        text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
+        # Determine page-specific extraction based on format
+        detected_fmt = self.detect_format(original_filename)
+        pages = None
+        if detected_fmt == "hudbay":
+            pages = [0]  # Page 1 only
+            if verbose:
+                print(f"  [INFO] Formato Hudbay detectado -> extrayendo solo pagina 1")
+        elif detected_fmt == "standard":
+            pages = [1]  # Page 2 only
+            if verbose:
+                print(f"  [INFO] Formato Estandar detectado -> extrayendo solo pagina 2")
+
+        text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=pages)
         filename_data = (
             self.extract_from_filename(original_filename)
             if original_filename
@@ -745,6 +869,19 @@ class PDFProcessor:
             ),
         }
 
+        # Excel cross-reference: if we have a DNI and an Excel lookup, try to match
+        if excel_lookup and candidates["dni"]:
+            first_dni = candidates["dni"][0]
+            first_name = candidates["nombre"][0] if candidates["nombre"] else ""
+            matched = self.match_name_from_excel(first_name, first_dni, excel_lookup)
+            if matched and matched != first_name:
+                # Prepend the Excel name as the top candidate
+                candidates["nombre"] = self._dedupe_keep_order(
+                    [self._clean_spaces(matched)] + candidates["nombre"]
+                )
+                if verbose:
+                    print(f"  [EXCEL] Nombre corregido por Excel: '{matched}' (DNI: {first_dni})")
+
         if verbose:
             print(f"\n[DEBUG] Candidatos encontrados:")
             for key, values in candidates.items():
@@ -780,10 +917,10 @@ class PDFProcessor:
             suggested = ""
 
         # Detect format: content-based detection takes priority over filename
-        detected_fmt = self.detect_format_from_content(text)
+        if not detected_fmt:
+            detected_fmt = self.detect_format_from_content(text)
         if not detected_fmt:
             detected_fmt = self.detect_format(original_filename)
-
         return {
             "success": success and bool(suggested),
             "suggested_name": suggested or None,

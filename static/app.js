@@ -1,5 +1,6 @@
 // File handling
 let selectedFiles = [];
+let excelSession = null;
 
 let uploadArea, fileInput, fileList, fileListItems, processBtn, clearBtn, results, resultsContent;
 
@@ -18,6 +19,19 @@ function initUpload() {
 
     processBtn.addEventListener('click', onProcessClick);
     clearBtn.addEventListener('click', onClearClick);
+
+    // Excel upload
+    const excelBtn = document.getElementById('excelBtn');
+    const excelInput = document.getElementById('excelInput');
+    if (excelBtn && excelInput) {
+        excelBtn.addEventListener('click', () => excelInput.click());
+        excelInput.addEventListener('change', () => {
+            if (excelInput.files && excelInput.files.length) {
+                handleExcelUpload(excelInput.files[0]);
+            }
+            excelInput.value = '';
+        });
+    }
 }
 
 if (document.readyState === 'loading') {
@@ -39,6 +53,35 @@ function handleFiles(files) {
     selectedFiles = [...selectedFiles, ...pdfFiles];
     updateFileList();
     updateButtons();
+}
+
+function handleExcelUpload(file) {
+    const statusEl = document.getElementById('excelStatus');
+    const excelBtn = document.getElementById('excelBtn');
+    if (!file) return;
+
+    statusEl.textContent = 'Subiendo...';
+    excelBtn.disabled = true;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/upload-excel', { method: 'POST', body: formData })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok || !data.success) throw new Error(data.error || 'Error al procesar Excel');
+            excelSession = data.excel_session;
+            statusEl.textContent = `${data.filename} (${data.entries} registros)`;
+            statusEl.classList.add('excel-loaded');
+        })
+        .catch(err => {
+            statusEl.textContent = 'Error: ' + (err.message || err);
+            statusEl.classList.remove('excel-loaded');
+            excelSession = null;
+        })
+        .finally(() => {
+            excelBtn.disabled = false;
+        });
 }
 
 function updateFileList() {
@@ -162,6 +205,7 @@ function onProcessClick() {
 
     var formData = new FormData();
     selectedFiles.forEach(function (file) { formData.append('files', file); });
+    if (excelSession) formData.append('excel_session', excelSession);
 
     fetch('/api/upload', { method: 'POST', body: formData })
         .then(function (r) {
@@ -851,8 +895,14 @@ function escapeHtml(str) {
 // Clear button
 function onClearClick() {
     selectedFiles = [];
+    excelSession = null;
     if (fileInput) fileInput.value = '';
     updateFileList();
     updateButtons();
     if (results) results.style.display = 'none';
+    const statusEl = document.getElementById('excelStatus');
+    if (statusEl) {
+        statusEl.textContent = '';
+        statusEl.classList.remove('excel-loaded');
+    }
 }
