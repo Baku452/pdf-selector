@@ -9,21 +9,25 @@
 <body>
     <div class="container">
 
-        <input type="file" id="fileInput" multiple accept=".pdf,application/pdf" style="display:none">
-        <div class="upload-area" id="uploadArea">
-            <div class="upload-label">
-                <span class="upload-icon">📎</span>
-                <h2>Arrastra y suelta tus PDFs aquí</h2>
-                <p>o haz clic para seleccionar archivos</p>
+        <div class="upload-row">
+            <input type="file" id="fileInput" multiple accept=".pdf,application/pdf" style="display:none">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-label">
+                    <span class="upload-icon">📄</span>
+                    <h2>Arrastra y suelta tus PDFs aquí</h2>
+                    <p>o haz clic para seleccionar archivos</p>
+                </div>
             </div>
-        </div>
 
-        <div class="excel-upload" id="excelUploadArea">
             <input type="file" id="excelInput" accept=".xlsx" style="display:none">
-            <button class="btn btn-secondary btn-small" id="excelBtn" type="button">
-                Subir Excel de referencia (opcional)
-            </button>
-            <span class="excel-status" id="excelStatus"></span>
+            <div class="upload-area upload-area-excel" id="excelUploadArea">
+                <div class="upload-label">
+                    <span class="upload-icon">📊</span>
+                    <h2>Excel de referencia</h2>
+                    <p class="excel-optional-label">Opcional — Cruzar DNI con nombres</p>
+                    <span class="excel-status" id="excelStatus"></span>
+                </div>
+            </div>
         </div>
 
         <div class="file-list" id="fileList" style="display: none;">

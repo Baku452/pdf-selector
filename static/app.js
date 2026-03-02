@@ -20,11 +20,11 @@ function initUpload() {
     processBtn.addEventListener('click', onProcessClick);
     clearBtn.addEventListener('click', onClearClick);
 
-    // Excel upload
-    const excelBtn = document.getElementById('excelBtn');
+    // Excel upload — click on the excel upload area
+    const excelArea = document.getElementById('excelUploadArea');
     const excelInput = document.getElementById('excelInput');
-    if (excelBtn && excelInput) {
-        excelBtn.addEventListener('click', () => excelInput.click());
+    if (excelArea && excelInput) {
+        excelArea.addEventListener('click', () => excelInput.click());
         excelInput.addEventListener('change', () => {
             if (excelInput.files && excelInput.files.length) {
                 handleExcelUpload(excelInput.files[0]);
@@ -57,11 +57,10 @@ function handleFiles(files) {
 
 function handleExcelUpload(file) {
     const statusEl = document.getElementById('excelStatus');
-    const excelBtn = document.getElementById('excelBtn');
+    const excelArea = document.getElementById('excelUploadArea');
     if (!file) return;
 
     statusEl.textContent = 'Subiendo...';
-    excelBtn.disabled = true;
 
     const formData = new FormData();
     formData.append('file', file);
@@ -73,14 +72,13 @@ function handleExcelUpload(file) {
             excelSession = data.excel_session;
             statusEl.textContent = `${data.filename} (${data.entries} registros)`;
             statusEl.classList.add('excel-loaded');
+            if (excelArea) excelArea.classList.add('excel-active');
         })
         .catch(err => {
             statusEl.textContent = 'Error: ' + (err.message || err);
             statusEl.classList.remove('excel-loaded');
+            if (excelArea) excelArea.classList.remove('excel-active');
             excelSession = null;
-        })
-        .finally(() => {
-            excelBtn.disabled = false;
         });
 }
 

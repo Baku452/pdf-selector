@@ -37,6 +37,13 @@ header h1 {
     font-size: 1.1em;
 }
 
+.upload-row {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
 .upload-area {
     position: relative;
     border: 3px dashed #078080;
@@ -46,7 +53,6 @@ header h1 {
     background: #fffffe;
     transition: all 0.3s ease;
     cursor: pointer;
-    margin-bottom: 30px;
 }
 
 .upload-area:hover {
@@ -61,6 +67,24 @@ header h1 {
     transform: scale(1.02);
 }
 
+.upload-area-excel {
+    border-color: #b0b0b0;
+    padding: 30px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.upload-area-excel:hover {
+    border-color: #078080;
+}
+
+.upload-area-excel.excel-active {
+    border-color: #078080;
+    border-style: solid;
+    background: #f0fafa;
+}
+
 .upload-label {
     pointer-events: none;
 }
@@ -68,6 +92,15 @@ header h1 {
 .upload-icon {
     font-size: 4em;
     margin-bottom: 20px;
+}
+
+.upload-area-excel .upload-icon {
+    font-size: 2.5em;
+    margin-bottom: 12px;
+}
+
+.upload-area-excel h2 {
+    font-size: 1.15em;
 }
 
 .upload-area h2 {
@@ -81,21 +114,25 @@ header h1 {
     font-size: 1.1em;
 }
 
-.excel-upload {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 12px;
-    margin-bottom: 8px;
-    padding: 0 4px;
+.excel-optional-label {
+    font-size: 0.92em !important;
+    color: #888 !important;
 }
 
 .excel-status {
+    display: block;
+    margin-top: 10px;
     font-size: 0.9em;
     color: #666;
+    min-height: 1.4em;
+}
+
+.excel-status:empty {
+    display: none;
 }
 
 .excel-status.excel-loaded {
+    display: block;
     color: #078080;
     font-weight: 600;
 }
@@ -717,6 +754,10 @@ header h1 {
 }
 
 @media (max-width: 768px) {
+    .upload-row {
+        grid-template-columns: 1fr;
+    }
+
     .container {
         padding: 20px;
     }
