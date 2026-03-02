@@ -64,8 +64,12 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install pyinstaller
-          pip install Flask==3.0.0 werkzeug==3.0.1 PyMuPDF==1.23.8
-          pip install pytesseract pdf2image Pillow pywebview openpyxl
+          pip install -r requirements.txt
+
+      - name: Verify openpyxl is installed before build
+        run: |
+          python -c "from openpyxl import load_workbook; print('openpyxl OK:', load_workbook)"
+          python -c "import et_xmlfile; print('et_xmlfile OK')"
 
       - name: Build EXE with PyInstaller
         run: pyinstaller pdfnamesetter.spec --noconfirm
@@ -77,6 +81,13 @@ jobs:
           Write-Host "=== EXE size in MB ==="
           $size = (Get-Item dist\PDF_Renombrar_Archivos.exe).Length / 1MB
           Write-Host "$size MB"
+
+      - name: Smoke test - verify openpyxl works in exe
+        run: |
+          Write-Host "=== Testing openpyxl import inside bundled exe ==="
+          $proc = Start-Process -FilePath "dist\PDF_Renombrar_Archivos.exe" -ArgumentList "--test-imports" -PassThru -NoNewWindow -Wait -RedirectStandardOutput "stdout.txt" -RedirectStandardError "stderr.txt"
+          if (Test-Path stdout.txt) { Get-Content stdout.txt }
+          if (Test-Path stderr.txt) { Get-Content stderr.txt }
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4

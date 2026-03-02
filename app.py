@@ -13,6 +13,19 @@ import uuid
 import json
 import threading
 from pathlib import Path
+
+# CI smoke test: verify critical imports work inside the bundled exe
+if '--test-imports' in sys.argv:
+    errors = []
+    for mod in ['flask', 'openpyxl', 'et_xmlfile', 'fitz', 'PIL']:
+        try:
+            __import__(mod)
+            print(f'[OK] {mod}')
+        except ImportError as e:
+            print(f'[FAIL] {mod}: {e}')
+            errors.append(mod)
+    sys.exit(1 if errors else 0)
+
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
 from werkzeug.utils import secure_filename
 from pdf_processor import PDFProcessor
