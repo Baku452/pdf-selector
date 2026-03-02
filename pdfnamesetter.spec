@@ -51,6 +51,7 @@ a = Analysis(
         'pdf2image',
         'PIL',
         'webview',
+        'openpyxl',
     ],
     hookspath=[],
     hooksconfig={},
