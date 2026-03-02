@@ -13,7 +13,11 @@ import difflib
 
 try:
     from openpyxl import load_workbook
-except ImportError:
+except ImportError as e:
+    print(f"[WARN] openpyxl not available: {e}")
+    load_workbook = None
+except Exception as e:
+    print(f"[WARN] openpyxl import failed: {e}")
     load_workbook = None
 
 try:

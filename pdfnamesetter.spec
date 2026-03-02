@@ -2,8 +2,13 @@
 import os
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# Collect ALL openpyxl files (submodules, data, binaries)
+openpyxl_datas, openpyxl_binaries, openpyxl_hiddenimports = collect_all('openpyxl')
+etxml_datas, etxml_binaries, etxml_hiddenimports = collect_all('et_xmlfile')
 
 # Find Tesseract and Poppler paths on Windows
 tesseract_path = os.environ.get('TESSERACT_PATH', r'C:\Program Files\Tesseract-OCR')
@@ -37,11 +42,11 @@ if os.path.isdir(poppler_path):
 a = Analysis(
     ['app.py'],
     pathex=[],
-    binaries=extra_binaries,
+    binaries=extra_binaries + openpyxl_binaries + etxml_binaries,
     datas=[
         ('templates', 'templates'),
         ('static', 'static'),
-    ] + extra_datas,
+    ] + extra_datas + openpyxl_datas + etxml_datas,
     hiddenimports=[
         'flask',
         'werkzeug',
@@ -51,19 +56,7 @@ a = Analysis(
         'pdf2image',
         'PIL',
         'webview',
-        'openpyxl',
-        'openpyxl.cell',
-        'openpyxl.cell._writer',
-        'openpyxl.workbook',
-        'openpyxl.reader',
-        'openpyxl.reader.excel',
-        'openpyxl.styles',
-        'openpyxl.utils',
-        'openpyxl.utils.datetime',
-        'openpyxl.xml',
-        'openpyxl.xml.functions',
-        'et_xmlfile',
-    ],
+    ] + openpyxl_hiddenimports + etxml_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
