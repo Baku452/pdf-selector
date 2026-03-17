@@ -486,6 +486,7 @@ header h1 {
 .match-percentage.match-good { color: #1a8a1a; }
 .match-percentage.match-medium { color: #b8860b; }
 .match-percentage.match-low { color: #cc3333; }
+.match-percentage.match-hint { color: #888; font-style: italic; }
 
 .excel-name-row {
     display: flex;

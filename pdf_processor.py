@@ -993,24 +993,29 @@ class PDFProcessor:
 
         # Excel cross-reference: lookup returns {dni: {"paciente": ..., "nombre_excel": ...}}
         nombre_excel = None
-        if excel_lookup and candidates["dni"]:
-            first_dni = candidates["dni"][0]
-            excel_entry = excel_lookup.get(first_dni)
-            if excel_entry:
-                pac_name = excel_entry.get("paciente", "")
-                if pac_name:
-                    pac_clean = self._clean_spaces(pac_name)
-                    # Always prepend the Excel paciente name as the top candidate
-                    candidates["nombre"] = self._dedupe_keep_order(
-                        [pac_clean] + candidates["nombre"]
-                    )
-                    if verbose:
-                        print(f"  [EXCEL] Nombre encontrado en Excel: '{pac_clean}' (DNI: {first_dni})")
-                ne = excel_entry.get("nombre_excel")
-                if ne:
-                    nombre_excel = ne
-                    if verbose:
-                        print(f"  [EXCEL] Nombre excel de referencia: '{nombre_excel}'")
+        excel_dni_found = None  # None = Excel not loaded; True/False when loaded
+        if excel_lookup:
+            if candidates["dni"]:
+                first_dni = candidates["dni"][0]
+                excel_entry = excel_lookup.get(first_dni)
+                excel_dni_found = excel_entry is not None
+                if excel_entry:
+                    pac_name = excel_entry.get("paciente", "")
+                    if pac_name:
+                        pac_clean = self._clean_spaces(pac_name)
+                        # Always prepend the Excel paciente name as the top candidate
+                        candidates["nombre"] = self._dedupe_keep_order(
+                            [pac_clean] + candidates["nombre"]
+                        )
+                        if verbose:
+                            print(f"  [EXCEL] Nombre encontrado en Excel: '{pac_clean}' (DNI: {first_dni})")
+                    ne = excel_entry.get("nombre_excel")
+                    if ne:
+                        nombre_excel = ne
+                        if verbose:
+                            print(f"  [EXCEL] Nombre excel de referencia: '{nombre_excel}'")
+            else:
+                excel_dni_found = False  # Excel loaded but no DNI extracted from PDF
 
         if verbose:
             print(f"\n[DEBUG] Candidatos encontrados:")
@@ -1070,6 +1075,7 @@ class PDFProcessor:
             "detected_format": detected_fmt,
             "nombre_excel": nombre_excel,
             "match_percentage": match_percentage,
+            "excel_dni_found": excel_dni_found,
         }
 
     # Reverse map: abbreviation -> full exam type name

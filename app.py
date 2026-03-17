@@ -176,6 +176,7 @@ def upload_pdf():
                 "detected_format": analysis.get("detected_format"),
                 "nombre_excel": analysis.get("nombre_excel"),
                 "match_percentage": analysis.get("match_percentage"),
+                "excel_dni_found": analysis.get("excel_dni_found"),
             }
             results.append(result)
 
@@ -242,6 +243,7 @@ def reanalyze_pdf(session_id, file_index):
         "detected_format": analysis.get("detected_format"),
         "nombre_excel": analysis.get("nombre_excel"),
         "match_percentage": analysis.get("match_percentage"),
+        "excel_dni_found": analysis.get("excel_dni_found"),
     })
 
 

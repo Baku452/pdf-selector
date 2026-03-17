@@ -331,16 +331,24 @@ function displayResults(resultsData, sessionId) {
                     <div class="preview-block">
                         <div class="preview-label">Nombre final</div>
                         <div class="result-suggested" data-role="preview"></div>
-                        ${result.nombre_excel ? `
+                        ${excelSession ? `
                         <div class="excel-match-block" data-role="excel-match">
-                            <div class="match-percentage" data-role="match-pct">
-                                Coincidencia: <strong>${result.match_percentage != null ? result.match_percentage + '%' : 'N/A'}</strong>
+                            <div class="match-percentage ${result.nombre_excel && result.match_percentage != null ? (result.match_percentage >= 80 ? 'match-good' : result.match_percentage >= 50 ? 'match-medium' : 'match-low') : 'match-hint'}" data-role="match-pct">
+                                ${result.nombre_excel && result.match_percentage != null
+                                    ? `Coincidencia: <strong>${result.match_percentage}%</strong>`
+                                    : result.excel_dni_found === true
+                                        ? 'DNI encontrado &mdash; sin columna &ldquo;nombre excel&rdquo; en el archivo'
+                                        : result.excel_dni_found === false
+                                            ? 'DNI no encontrado en el Excel'
+                                            : 'Sin referencia Excel'}
                             </div>
+                            ${result.nombre_excel ? `
                             <div class="excel-name-row">
                                 <span class="excel-name-label">Nombre Excel:</span>
                                 <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(result.nombre_excel)}</span>
                                 <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
                             </div>
+                            ` : ''}
                         </div>
                         ` : ''}
                         <div class="preview-actions">
@@ -473,33 +481,38 @@ function displayResults(resultsData, sessionId) {
                 }
             });
             // Update nombre_excel and match info
-            if (data.nombre_excel) {
-                currentNombreExcel = data.nombre_excel;
-                let matchBlock = div.querySelector('[data-role="excel-match"]');
-                if (!matchBlock) {
-                    // Create the match block if it didn't exist before
-                    const previewBlock = div.querySelector('.preview-block');
-                    const previewEl = div.querySelector('[data-role="preview"]');
-                    if (previewBlock && previewEl) {
-                        const mb = document.createElement('div');
-                        mb.className = 'excel-match-block';
-                        mb.setAttribute('data-role', 'excel-match');
-                        mb.innerHTML = `
-                            <div class="match-percentage" data-role="match-pct"></div>
-                            <div class="excel-name-row">
-                                <span class="excel-name-label">Nombre Excel:</span>
-                                <span class="excel-name-value" data-role="nombre-excel"></span>
-                                <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
-                            </div>
+            const matchBlock = div.querySelector('[data-role="excel-match"]');
+            if (matchBlock) {
+                const matchEl = matchBlock.querySelector('[data-role="match-pct"]');
+                if (data.nombre_excel) {
+                    currentNombreExcel = data.nombre_excel;
+                    const neEl = matchBlock.querySelector('[data-role="nombre-excel"]');
+                    if (neEl) neEl.textContent = data.nombre_excel;
+                    // Show nombre-excel row if it was hidden before
+                    let nameRow = matchBlock.querySelector('.excel-name-row');
+                    if (!nameRow) {
+                        nameRow = document.createElement('div');
+                        nameRow.className = 'excel-name-row';
+                        nameRow.innerHTML = `
+                            <span class="excel-name-label">Nombre Excel:</span>
+                            <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(data.nombre_excel)}</span>
+                            <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
                         `;
-                        previewEl.after(mb);
-                        mb.querySelector('[data-action="use-excel-name"]').addEventListener('click', () => {
+                        nameRow.querySelector('[data-action="use-excel-name"]').addEventListener('click', () => {
                             div.querySelector('[data-role="preview"]').textContent = currentNombreExcel;
                         });
+                        matchBlock.appendChild(nameRow);
+                    }
+                } else if (matchEl) {
+                    // Update hint message based on new excel_dni_found
+                    if (data.excel_dni_found === true) {
+                        matchEl.className = 'match-percentage match-hint';
+                        matchEl.innerHTML = 'DNI encontrado &mdash; sin columna &ldquo;nombre excel&rdquo; en el archivo';
+                    } else if (data.excel_dni_found === false) {
+                        matchEl.className = 'match-percentage match-hint';
+                        matchEl.innerHTML = 'DNI no encontrado en el Excel';
                     }
                 }
-                const neEl = div.querySelector('[data-role="nombre-excel"]');
-                if (neEl) neEl.textContent = data.nombre_excel;
             }
             updatePreview();
         };
