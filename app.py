@@ -55,6 +55,8 @@ ALLOWED_EXTENSIONS = {'pdf'}
 
 # In-memory store for Excel lookup dicts keyed by session_id
 _excel_lookups = {}
+# In-memory store for Excel file paths so users can reconfigure column mapping
+_excel_paths = {}
 
 
 def allowed_file(filename):
@@ -108,15 +110,43 @@ def upload_excel():
     excel_path = session_path / 'reference.xlsx'
     file.save(str(excel_path))
 
+    excel_path_str = str(excel_path)
+    _excel_paths[excel_session] = excel_path_str
+
     try:
-        lookup = processor.load_excel_reference(str(excel_path))
+        lookup = processor.load_excel_reference(excel_path_str)
         _excel_lookups[excel_session] = lookup
+        excel_info = processor.get_excel_info(excel_path_str)
         return jsonify({
             'success': True,
             'excel_session': excel_session,
             'entries': len(lookup),
             'filename': file.filename,
+            'sheets': list(excel_info.keys()),
+            'columns': excel_info,
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/configure-excel/<excel_session>', methods=['POST'])
+def configure_excel(excel_session):
+    """Re-load the Excel reference with a user-specified sheet/column mapping."""
+    excel_path = _excel_paths.get(excel_session)
+    if not excel_path:
+        return jsonify({'error': 'Excel session not found'}), 404
+
+    data = request.get_json() or {}
+    try:
+        lookup = processor.load_excel_reference(
+            excel_path,
+            sheet_name=data.get('sheet') or None,
+            dni_col=data.get('dni_col') or None,
+            hudbay_col=data.get('hudbay_col') or None,
+            standard_col=data.get('standard_col') or None,
+        )
+        _excel_lookups[excel_session] = lookup
+        return jsonify({'success': True, 'entries': len(lookup)})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 

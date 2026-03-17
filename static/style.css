@@ -469,6 +469,81 @@ header h1 {
     margin-top: 10px;
 }
 
+/* ── Excel Column Config Panel ── */
+.excel-config-panel {
+    background: #f5f9ff;
+    border: 1.5px solid #b3cce8;
+    border-radius: 10px;
+    margin: 0.8rem 0 1rem;
+    overflow: hidden;
+}
+
+.excel-config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.55rem 1rem;
+    background: #e8f0fa;
+    border-bottom: 1px solid #b3cce8;
+}
+
+.excel-config-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #2c4a7c;
+}
+
+.excel-config-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #5577aa;
+    padding: 0 4px;
+}
+
+.excel-config-body {
+    padding: 0.75rem 1rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.5rem 1.2rem;
+    align-items: end;
+}
+
+.excel-config-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.excel-config-label {
+    font-size: 0.78rem;
+    color: #555;
+    font-weight: 500;
+}
+
+.excel-config-select {
+    font-size: 0.85rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #c0d0e8;
+    border-radius: 6px;
+    background: #fff;
+    color: #222;
+}
+
+.excel-config-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    grid-column: 1 / -1;
+    margin-top: 0.3rem;
+}
+
+.excel-config-status {
+    font-size: 0.82rem;
+    color: #2e7d32;
+}
+
 .excel-match-block {
     margin-top: 10px;
     padding: 10px 12px;

@@ -808,14 +808,40 @@ class PDFProcessor:
         return None
 
     @staticmethod
-    def load_excel_reference(excel_path):
+    def get_excel_info(excel_path):
+        """Return all sheet names and their column headers.
+
+        Returns {sheet_name: [col1, col2, ...]} for every sheet in the workbook.
+        """
+        if load_workbook is None:
+            raise ImportError("openpyxl is required to read Excel files.")
+        wb = load_workbook(excel_path, read_only=True, data_only=True)
+        info = {}
+        for name in wb.sheetnames:
+            ws = wb[name]
+            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+            info[name] = [str(h).strip() if h else "" for h in (header_row or [])]
+        wb.close()
+        return info
+
+    @staticmethod
+    def load_excel_reference(
+        excel_path,
+        sheet_name=None,
+        dni_col=None,
+        hudbay_col=None,
+        standard_col=None,
+    ):
         """Load an Excel file and build a DNI-keyed lookup dict.
 
-        Reads the 'CARGAS EN MEDIWEB' sheet (or active sheet) and maps the
-        'documento' column (DNI) to a dict with 'paciente' and optionally
-        'nombre_excel' (the expected filename for comparison).
+        Args:
+            excel_path: path to the .xlsx file
+            sheet_name: sheet to read; None → try 'CARGAS EN MEDIWEB', then active sheet
+            dni_col:      exact column header for the DNI/document field (case-insensitive)
+            hudbay_col:   exact column header for the Hudbay reference filename
+            standard_col: exact column header for the standard reference filename
 
-        Returns dict {dni_string: {"paciente": str, "nombre_excel": str|None}}.
+        Returns dict {dni_string: {"paciente": str|None, "hudbay_name": str|None, "standard_name": str|None}}.
         """
         if load_workbook is None:
             raise ImportError(
@@ -824,47 +850,58 @@ class PDFProcessor:
 
         wb = load_workbook(excel_path, read_only=True, data_only=True)
 
-        # Try the expected sheet name, fall back to first sheet
-        sheet_name = "CARGAS EN MEDIWEB"
-        if sheet_name in wb.sheetnames:
+        # Sheet selection
+        if sheet_name and sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
+        elif "CARGAS EN MEDIWEB" in wb.sheetnames:
+            ws = wb["CARGAS EN MEDIWEB"]
         else:
             ws = wb.active
 
-        # Find column indices from header row
+        # Build header index (raw for matching, lower for auto-detect)
         header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
-        headers = [str(h).strip().lower() if h else "" for h in header_row]
+        headers_raw = [str(h).strip() if h else "" for h in header_row]
+        headers = [h.lower() for h in headers_raw]
 
-        doc_idx = None
-        pac_idx = None
-        nombre_excel_idx = None
-        for i, h in enumerate(headers):
-            if "documento" in h or h == "dni":
-                doc_idx = i
-            if "paciente" in h or h == "nombre" or h == "name":
-                pac_idx = i
-            if "nombre excel" in h or "nombre_excel" in h:
-                nombre_excel_idx = i
+        def _find_col(explicit, *auto_patterns):
+            """Return column index by explicit name first, then pattern auto-detect."""
+            if explicit:
+                for i, h in enumerate(headers_raw):
+                    if h.lower() == explicit.lower():
+                        return i
+            for pat in auto_patterns:
+                for i, h in enumerate(headers):
+                    if pat in h:
+                        return i
+            return None
 
-        if doc_idx is None or pac_idx is None:
+        doc_idx      = _find_col(dni_col,      "documento", "dni")
+        pac_idx      = _find_col(None,          "paciente", "nombre", "name")
+        hudbay_idx   = _find_col(hudbay_col,   "emo hudbay", "hudbay", "nombre excel", "nombre_excel")
+        standard_idx = _find_col(standard_col, "emo bambas", "bambas", "nombre excel", "nombre_excel")
+
+        if doc_idx is None:
             wb.close()
             raise ValueError(
-                f"No se encontraron las columnas 'documento' y 'paciente' en el Excel. "
-                f"Columnas encontradas: {headers}"
+                f"No se encontró columna de DNI/documento en la hoja '{ws.title}'. "
+                f"Columnas encontradas: {headers_raw}"
             )
+
+        def _cell(row, idx):
+            if idx is not None and idx < len(row) and row[idx]:
+                return str(row[idx]).strip() or None
+            return None
 
         lookup = {}
         for row in ws.iter_rows(min_row=2, values_only=True):
-            doc_val = row[doc_idx] if doc_idx < len(row) else None
-            pac_val = row[pac_idx] if pac_idx < len(row) else None
-            if doc_val and pac_val:
-                dni_key = str(doc_val).strip()
-                entry = {"paciente": str(pac_val).strip(), "nombre_excel": None}
-                if nombre_excel_idx is not None:
-                    ne_val = row[nombre_excel_idx] if nombre_excel_idx < len(row) else None
-                    if ne_val:
-                        entry["nombre_excel"] = str(ne_val).strip()
-                lookup[dni_key] = entry
+            doc_val = _cell(row, doc_idx)
+            if not doc_val:
+                continue
+            lookup[doc_val] = {
+                "paciente":      _cell(row, pac_idx),
+                "hudbay_name":   _cell(row, hudbay_idx),
+                "standard_name": _cell(row, standard_idx),
+            }
 
         wb.close()
         return lookup
@@ -991,7 +1028,7 @@ class PDFProcessor:
             ),
         }
 
-        # Excel cross-reference: lookup returns {dni: {"paciente": ..., "nombre_excel": ...}}
+        # Excel cross-reference: lookup returns {dni: {"paciente", "hudbay_name", "standard_name"}}
         nombre_excel = None
         excel_dni_found = None  # None = Excel not loaded; True/False when loaded
         if excel_lookup:
@@ -1000,7 +1037,7 @@ class PDFProcessor:
                 excel_entry = excel_lookup.get(first_dni)
                 excel_dni_found = excel_entry is not None
                 if excel_entry:
-                    pac_name = excel_entry.get("paciente", "")
+                    pac_name = excel_entry.get("paciente") or ""
                     if pac_name:
                         pac_clean = self._clean_spaces(pac_name)
                         # Always prepend the Excel paciente name as the top candidate
@@ -1009,11 +1046,13 @@ class PDFProcessor:
                         )
                         if verbose:
                             print(f"  [EXCEL] Nombre encontrado en Excel: '{pac_clean}' (DNI: {first_dni})")
-                    ne = excel_entry.get("nombre_excel")
-                    if ne:
-                        nombre_excel = ne
-                        if verbose:
-                            print(f"  [EXCEL] Nombre excel de referencia: '{nombre_excel}'")
+                    # Pick format-specific reference name
+                    if detected_fmt == "hudbay":
+                        nombre_excel = excel_entry.get("hudbay_name") or excel_entry.get("standard_name")
+                    else:
+                        nombre_excel = excel_entry.get("standard_name") or excel_entry.get("hudbay_name")
+                    if nombre_excel and verbose:
+                        print(f"  [EXCEL] Nombre excel de referencia ({detected_fmt}): '{nombre_excel}'")
             else:
                 excel_dni_found = False  # Excel loaded but no DNI extracted from PDF
 

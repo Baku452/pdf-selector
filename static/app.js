@@ -1,6 +1,8 @@
 // File handling
 let selectedFiles = [];
 let excelSession = null;
+let excelConfigData = null; // {sheets: [...], columns: {sheetName: [col, ...]}}
+const _cardReanalyzers = {}; // file_index -> applyReanalysis(data)
 
 let uploadArea, fileInput, fileList, fileListItems, processBtn, clearBtn, results, resultsContent;
 
@@ -70,16 +72,186 @@ function handleExcelUpload(file) {
         .then(({ ok, data }) => {
             if (!ok || !data.success) throw new Error(data.error || 'Error al procesar Excel');
             excelSession = data.excel_session;
+            excelConfigData = { sheets: data.sheets || [], columns: data.columns || {} };
             statusEl.textContent = `${data.filename} (${data.entries} registros)`;
             statusEl.classList.add('excel-loaded');
             if (excelArea) excelArea.classList.add('excel-active');
+            renderExcelConfigPanel(data);
         })
         .catch(err => {
             statusEl.textContent = 'Error: ' + (err.message || err);
             statusEl.classList.remove('excel-loaded');
             if (excelArea) excelArea.classList.remove('excel-active');
             excelSession = null;
+            excelConfigData = null;
+            const panel = document.getElementById('excelConfigPanel');
+            if (panel) panel.style.display = 'none';
         });
+}
+
+function renderExcelConfigPanel(data) {
+    const panel = document.getElementById('excelConfigPanel');
+    if (!panel) return;
+
+    const sheets = data.sheets || [];
+    const columns = data.columns || {};
+
+    // Auto-pick a sensible default sheet
+    const defaultSheet = sheets.find(s =>
+        /rotulo/i.test(s) || /carga/i.test(s)
+    ) || sheets[0] || '';
+
+    const sheetOptions = sheets.map(s =>
+        `<option value="${escapeHtml(s)}"${s === defaultSheet ? ' selected' : ''}>${escapeHtml(s)}</option>`
+    ).join('');
+
+    panel.innerHTML = `
+        <div class="excel-config-panel">
+            <div class="excel-config-header">
+                <span class="excel-config-title">Configuración de referencia Excel</span>
+                <button class="excel-config-toggle" id="excelConfigToggle" title="Contraer">▲</button>
+            </div>
+            <div class="excel-config-body" id="excelConfigBody">
+                <div class="excel-config-row">
+                    <label class="excel-config-label">Hoja:</label>
+                    <select class="excel-config-select" id="excelSheetSel">${sheetOptions}</select>
+                </div>
+                <div id="excelColConfig"></div>
+                <div class="excel-config-actions">
+                    <button class="btn btn-primary btn-small" id="applyExcelConfigBtn">Aplicar</button>
+                    <span class="excel-config-status" id="excelConfigStatus"></span>
+                </div>
+            </div>
+        </div>
+    `;
+    panel.style.display = 'block';
+
+    updateColumnSelectors(defaultSheet, columns);
+
+    document.getElementById('excelSheetSel').addEventListener('change', e => {
+        updateColumnSelectors(e.target.value, columns);
+    });
+
+    document.getElementById('applyExcelConfigBtn').addEventListener('click', applyExcelConfig);
+
+    document.getElementById('excelConfigToggle').addEventListener('click', () => {
+        const body = document.getElementById('excelConfigBody');
+        const btn = document.getElementById('excelConfigToggle');
+        if (body.style.display === 'none') {
+            body.style.display = '';
+            btn.textContent = '▲';
+            btn.title = 'Contraer';
+        } else {
+            body.style.display = 'none';
+            btn.textContent = '▼';
+            btn.title = 'Expandir';
+        }
+    });
+}
+
+function updateColumnSelectors(sheet, allColumns) {
+    const cols = (allColumns[sheet] || []).filter(Boolean);
+    const noneOpt = '<option value="">(ninguna)</option>';
+    const colOpts = noneOpt + cols.map(c =>
+        `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`
+    ).join('');
+
+    const container = document.getElementById('excelColConfig');
+    if (!container) return;
+    container.innerHTML = `
+        <div class="excel-config-row">
+            <label class="excel-config-label">Columna DNI:</label>
+            <select class="excel-config-select" id="excelDniCol">${colOpts}</select>
+        </div>
+        <div class="excel-config-row">
+            <label class="excel-config-label">Nombre ref. Hudbay:</label>
+            <select class="excel-config-select" id="excelHudbayCol">${colOpts}</select>
+        </div>
+        <div class="excel-config-row">
+            <label class="excel-config-label">Nombre ref. Estándar:</label>
+            <select class="excel-config-select" id="excelStandardCol">${colOpts}</select>
+        </div>
+    `;
+
+    // Auto-select known column names
+    _autoSelectCol('excelDniCol',      cols, ['DNI', 'DOCUMENTO', 'Documento', 'N° DOC']);
+    _autoSelectCol('excelHudbayCol',   cols, ['EMO HUDBAY', 'HUDBAY', 'nombre excel', 'NOMBRE EXCEL']);
+    _autoSelectCol('excelStandardCol', cols, ['EMO BAMBAS', 'BAMBAS', 'nombre excel', 'NOMBRE EXCEL']);
+}
+
+function _autoSelectCol(selId, cols, candidates) {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    for (const c of candidates) {
+        const found = cols.find(col => col.toLowerCase() === c.toLowerCase());
+        if (found) { sel.value = found; return; }
+    }
+}
+
+function applyExcelConfig() {
+    const sheet    = document.getElementById('excelSheetSel')?.value;
+    const dni_col  = document.getElementById('excelDniCol')?.value || null;
+    const hudbay_col   = document.getElementById('excelHudbayCol')?.value || null;
+    const standard_col = document.getElementById('excelStandardCol')?.value || null;
+    const btn    = document.getElementById('applyExcelConfigBtn');
+    const status = document.getElementById('excelConfigStatus');
+
+    btn.disabled = true;
+    btn.textContent = 'Aplicando…';
+    if (status) status.textContent = '';
+
+    fetch(`/api/configure-excel/${excelSession}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet, dni_col, hudbay_col, standard_col }),
+    })
+    .then(r => r.json())
+    .then(d => {
+        btn.disabled = false;
+        btn.textContent = 'Aplicar';
+        if (d.success) {
+            if (status) status.textContent = `✓ ${d.entries} registros cargados`;
+            const statusEl = document.getElementById('excelStatus');
+            if (statusEl) {
+                statusEl.textContent = statusEl.textContent.replace(/\s*\(\d+ registros\)/, '')
+                    + ` (${d.entries} registros)`;
+            }
+            reanalyzeAllWithExcel();
+        } else {
+            if (status) status.textContent = 'Error: ' + d.error;
+        }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.textContent = 'Aplicar';
+        if (status) status.textContent = 'Error de conexión';
+    });
+}
+
+function reanalyzeAllWithExcel() {
+    const rc = document.getElementById('resultsContent');
+    if (!rc) return;
+    const sid = rc.dataset.sessionId;
+    if (!sid) return;
+
+    rc.querySelectorAll('[data-file-index]').forEach(card => {
+        const idx = card.dataset.fileIndex;
+        const radio = card.querySelector('input[name^="format_"]:checked');
+        const format = radio ? radio.value : 'standard';
+
+        fetch(`/api/reanalyze/${sid}/${idx}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ format, excel_session: excelSession }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.candidates && _cardReanalyzers[idx]) {
+                _cardReanalyzers[idx](data);
+            }
+        })
+        .catch(() => {});
+    });
 }
 
 function updateFileList() {
@@ -251,6 +423,7 @@ function displayResults(resultsData, sessionId) {
     resultsContent.innerHTML = '';
     resultsContent.dataset.sessionId = sessionId || '';
     _previewUpdaters.length = 0;
+    Object.keys(_cardReanalyzers).forEach(k => delete _cardReanalyzers[k]);
 
     resultsData.forEach(result => {
         const div = document.createElement('div');
@@ -806,6 +979,11 @@ function displayResults(resultsData, sessionId) {
                 });
             });
         }
+
+        // Register reanalyzer so external callers (applyExcelConfig) can update this card
+        if (result.file_index != null) {
+            _cardReanalyzers[String(result.file_index)] = applyReanalysis;
+        }
     });
 
     // "Descargar todos (ZIP)" button
@@ -1018,6 +1196,7 @@ function escapeHtml(str) {
 function onClearClick() {
     selectedFiles = [];
     excelSession = null;
+    excelConfigData = null;
     if (fileInput) fileInput.value = '';
     updateFileList();
     updateButtons();
@@ -1027,4 +1206,8 @@ function onClearClick() {
         statusEl.textContent = '';
         statusEl.classList.remove('excel-loaded');
     }
+    const configPanel = document.getElementById('excelConfigPanel');
+    if (configPanel) { configPanel.style.display = 'none'; configPanel.innerHTML = ''; }
+    const excelArea = document.getElementById('excelUploadArea');
+    if (excelArea) excelArea.classList.remove('excel-active');
 }
