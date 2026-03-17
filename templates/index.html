@@ -100,6 +100,40 @@
             if (typeof handleFiles === 'function') handleFiles(Array.from(list));
         });
 
+        // Excel drag & drop
+        var excelUploadArea = document.getElementById('excelUploadArea');
+        var excelInput = document.getElementById('excelInput');
+        if (excelUploadArea && excelInput) {
+            excelUploadArea.addEventListener('dragenter', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                excelUploadArea.classList.add('dragover');
+            });
+            excelUploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                excelUploadArea.classList.add('dragover');
+            });
+            excelUploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                excelUploadArea.classList.remove('dragover');
+            });
+            excelUploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                excelUploadArea.classList.remove('dragover');
+                var files = e.dataTransfer.files;
+                if (!files || !files.length) return;
+                var file = files[0];
+                if (!file.name.toLowerCase().endsWith('.xlsx')) {
+                    alert('Solo se aceptan archivos .xlsx');
+                    return;
+                }
+                if (typeof handleExcelUpload === 'function') handleExcelUpload(file);
+            });
+        }
+
         // Prevent browser from opening dropped files
         document.addEventListener('dragover', function(e) { e.preventDefault(); });
         document.addEventListener('drop', function(e) { e.preventDefault(); });

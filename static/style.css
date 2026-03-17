@@ -469,6 +469,46 @@ header h1 {
     margin-top: 10px;
 }
 
+.excel-match-block {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #f0f7ff;
+    border-radius: 8px;
+    border: 1px solid #c8ddf0;
+}
+
+.match-percentage {
+    font-size: 0.9em;
+    color: #555;
+    margin-bottom: 6px;
+}
+
+.match-percentage.match-good { color: #1a8a1a; }
+.match-percentage.match-medium { color: #b8860b; }
+.match-percentage.match-low { color: #cc3333; }
+
+.excel-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.excel-name-label {
+    font-size: 0.85em;
+    color: #666;
+    white-space: nowrap;
+}
+
+.excel-name-value {
+    font-size: 0.85em;
+    font-family: monospace;
+    color: #333;
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+}
+
 .download-all-wrap {
     margin-top: 20px;
     padding: 16px;

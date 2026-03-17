@@ -125,6 +125,25 @@ function sanitizePart(value) {
         .replace(/^_+|_+$/g, '');
 }
 
+function calcMatchPercentage(name1, name2) {
+    if (!name1 || !name2) return 0;
+    const a = name1.toUpperCase().replace(/\.pdf$/i, '');
+    const b = name2.toUpperCase().replace(/\.pdf$/i, '');
+    // Simple character-level similarity (Levenshtein-like via longest common subsequence)
+    const len1 = a.length, len2 = b.length;
+    if (len1 === 0 || len2 === 0) return 0;
+    // Use a simple approach: count matching chars in order
+    let matches = 0, j = 0;
+    for (let i = 0; i < len1 && j < len2; i++) {
+        if (a[i] === b[j]) { matches++; j++; }
+        else {
+            // Try skipping in either string
+            if (j + 1 < len2 && a[i] === b[j + 1]) { j++; matches++; j++; }
+        }
+    }
+    return Math.round((matches / Math.max(len1, len2)) * 1000) / 10;
+}
+
 const EXAM_TYPE_ABBR = {
     'PREOCUPACIONAL': 'EMPO',
     'PERIODICO': 'EMOA',
@@ -312,6 +331,18 @@ function displayResults(resultsData, sessionId) {
                     <div class="preview-block">
                         <div class="preview-label">Nombre final</div>
                         <div class="result-suggested" data-role="preview"></div>
+                        ${result.nombre_excel ? `
+                        <div class="excel-match-block" data-role="excel-match">
+                            <div class="match-percentage" data-role="match-pct">
+                                Coincidencia: <strong>${result.match_percentage != null ? result.match_percentage + '%' : 'N/A'}</strong>
+                            </div>
+                            <div class="excel-name-row">
+                                <span class="excel-name-label">Nombre Excel:</span>
+                                <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(result.nombre_excel)}</span>
+                                <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
+                            </div>
+                        </div>
+                        ` : ''}
                         <div class="preview-actions">
                             <button class="btn btn-secondary btn-small" data-action="copy">Copiar</button>
                             ${result.file_index != null ? `<button class="btn btn-primary btn-small" data-action="download-one">Descargar PDF</button>` : ''}
@@ -376,14 +407,34 @@ function displayResults(resultsData, sessionId) {
             include.dni = true;
         };
 
+        // Store nombre_excel for this card
+        let currentNombreExcel = result.nombre_excel || null;
+
         const updatePreview = () => {
             const previewEl = div.querySelector('[data-role="preview"]');
             const fields = getFields();
             syncIncludeFromUI();
             const name = buildFinalFilename(fields, include, null, div);
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
+
+            // Update match percentage if nombre_excel exists
+            const matchEl = div.querySelector('[data-role="match-pct"]');
+            if (matchEl && currentNombreExcel && name) {
+                const pct = calcMatchPercentage(name, currentNombreExcel);
+                matchEl.innerHTML = 'Coincidencia: <strong>' + pct + '%</strong>';
+                matchEl.className = 'match-percentage' + (pct >= 80 ? ' match-good' : pct >= 50 ? ' match-medium' : ' match-low');
+            }
         };
         _previewUpdaters.push(updatePreview);
+
+        // "Use excel name" button
+        const useExcelBtn = div.querySelector('[data-action="use-excel-name"]');
+        if (useExcelBtn && currentNombreExcel) {
+            useExcelBtn.addEventListener('click', () => {
+                const previewEl = div.querySelector('[data-role="preview"]');
+                previewEl.textContent = currentNombreExcel;
+            });
+        }
 
         const HUDBAY_ORDER = ['fecha', 'tipo_examen', 'dni', 'nombre', 'empresa'];
         const STANDARD_ORDER = ['dni', 'nombre', 'empresa', 'tipo_examen', 'fecha'];
@@ -398,11 +449,84 @@ function displayResults(resultsData, sessionId) {
             });
         };
 
-        // format radio -> reorder fields and update preview
+        // Helper to update field UI from re-analysis data
+        const applyReanalysis = (data) => {
+            const candidates = data.candidates || {};
+            const defaults = data.defaults || {};
+            // Update selects and inputs
+            ['dni', 'nombre', 'empresa', 'tipo_examen', 'fecha'].forEach(field => {
+                const sel = div.querySelector(`[data-field-select="${field}"]`);
+                const inp = div.querySelector(`[data-field-input="${field}"]`);
+                if (sel) {
+                    const opts = candidates[field] || [];
+                    const defVal = defaults[field] || '';
+                    sel.innerHTML = '<option value="">(seleccionar)</option>' +
+                        opts.map(v => {
+                            const display = field === 'tipo_examen' ? examTypeDisplayLabel(v) : v;
+                            const selected = v === defVal ? ' selected' : '';
+                            return `<option value="${escapeHtml(v)}"${selected}>${escapeHtml(display)}</option>`;
+                        }).join('');
+                }
+                if (inp) {
+                    const defVal = defaults[field] || '';
+                    inp.value = field === 'tipo_examen' ? (EXAM_TYPE_ABBR[defVal] || defVal) : defVal;
+                }
+            });
+            // Update nombre_excel and match info
+            if (data.nombre_excel) {
+                currentNombreExcel = data.nombre_excel;
+                let matchBlock = div.querySelector('[data-role="excel-match"]');
+                if (!matchBlock) {
+                    // Create the match block if it didn't exist before
+                    const previewBlock = div.querySelector('.preview-block');
+                    const previewEl = div.querySelector('[data-role="preview"]');
+                    if (previewBlock && previewEl) {
+                        const mb = document.createElement('div');
+                        mb.className = 'excel-match-block';
+                        mb.setAttribute('data-role', 'excel-match');
+                        mb.innerHTML = `
+                            <div class="match-percentage" data-role="match-pct"></div>
+                            <div class="excel-name-row">
+                                <span class="excel-name-label">Nombre Excel:</span>
+                                <span class="excel-name-value" data-role="nombre-excel"></span>
+                                <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
+                            </div>
+                        `;
+                        previewEl.after(mb);
+                        mb.querySelector('[data-action="use-excel-name"]').addEventListener('click', () => {
+                            div.querySelector('[data-role="preview"]').textContent = currentNombreExcel;
+                        });
+                    }
+                }
+                const neEl = div.querySelector('[data-role="nombre-excel"]');
+                if (neEl) neEl.textContent = data.nombre_excel;
+            }
+            updatePreview();
+        };
+
+        // format radio -> re-extract from correct page and update fields
         div.querySelectorAll('input[name^="format_"]').forEach(radio => {
             radio.addEventListener('change', () => {
                 reorderFields(radio.value);
-                updatePreview();
+                // Call re-analyze API to extract from correct page
+                const sid = resultsContent.dataset.sessionId;
+                const idx = div.dataset.fileIndex;
+                if (sid && idx != null) {
+                    const body = { format: radio.value };
+                    if (excelSession) body.excel_session = excelSession;
+                    fetch(`/api/reanalyze/${sid}/${idx}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.candidates) applyReanalysis(data);
+                    })
+                    .catch(() => {});
+                } else {
+                    updatePreview();
+                }
             });
         });
 

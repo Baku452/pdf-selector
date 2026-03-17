@@ -174,6 +174,8 @@ def upload_pdf():
                 "text_chars": analysis.get("text_chars", 0),
                 "file_index": file_index,
                 "detected_format": analysis.get("detected_format"),
+                "nombre_excel": analysis.get("nombre_excel"),
+                "match_percentage": analysis.get("match_percentage"),
             }
             results.append(result)
 
@@ -195,6 +197,52 @@ def upload_pdf():
             })
 
     return jsonify({'session_id': session_id, 'results': results})
+
+
+@app.route('/api/reanalyze/<session_id>/<int:file_index>', methods=['POST'])
+def reanalyze_pdf(session_id, file_index):
+    """Re-analyze a PDF with a forced format (hudbay or standard).
+
+    Used when the user switches the format radio in the UI, so data
+    is re-extracted from the correct page.
+    """
+    data = request.get_json() or {}
+    forced_format = data.get('format', 'standard')
+    if forced_format not in ('hudbay', 'standard'):
+        return jsonify({'error': 'Invalid format'}), 400
+
+    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    pdf_path = session_path / f"{file_index}.pdf"
+    if not pdf_path.is_file():
+        return jsonify({'error': 'File not found'}), 404
+
+    # Check for Excel reference session
+    excel_session = data.get('excel_session', '').strip()
+    excel_lookup = _excel_lookups.get(excel_session) if excel_session else None
+
+    analysis = processor.analyze(
+        str(pdf_path),
+        verbose=True,
+        excel_lookup=excel_lookup,
+        forced_format=forced_format,
+    )
+
+    # Update cached defaults
+    cache_path = session_path / f"{file_index}.defaults.json"
+    try:
+        cache_path.write_text(json.dumps(analysis.get("defaults", {})))
+    except Exception:
+        pass
+
+    return jsonify({
+        "success": bool(analysis.get("success")),
+        "candidates": analysis.get("candidates", {}),
+        "defaults": analysis.get("defaults", {}),
+        "notes": analysis.get("notes", []),
+        "detected_format": analysis.get("detected_format"),
+        "nombre_excel": analysis.get("nombre_excel"),
+        "match_percentage": analysis.get("match_percentage"),
+    })
 
 
 @app.route('/api/preview/<session_id>/<int:file_index>')

@@ -38,46 +38,54 @@ except ImportError:
     convert_from_path = None
 
 # Configure bundled Tesseract/Poppler paths when running from PyInstaller
-_BUNDLE_DIR = getattr(sys, '_MEIPASS', None)
+_BUNDLE_DIR = getattr(sys, "_MEIPASS", None)
 _TESSERACT_AVAILABLE = False
 _POPPLER_PATH = None  # Store poppler path for pdf2image
 
 if _BUNDLE_DIR:
-    _tesseract_exe = os.path.join(_BUNDLE_DIR, 'tesseract', 'tesseract.exe')
+    _tesseract_exe = os.path.join(_BUNDLE_DIR, "tesseract", "tesseract.exe")
     if os.path.isfile(_tesseract_exe) and pytesseract:
         pytesseract.pytesseract.tesseract_cmd = _tesseract_exe
-        os.environ['TESSDATA_PREFIX'] = os.path.join(_BUNDLE_DIR, 'tesseract', 'tessdata')
+        os.environ["TESSDATA_PREFIX"] = os.path.join(
+            _BUNDLE_DIR, "tesseract", "tessdata"
+        )
         _TESSERACT_AVAILABLE = True
         print(f"[DEBUG] Tesseract configured at: {_tesseract_exe}")
     else:
         print(f"[WARNING] Tesseract not found at: {_tesseract_exe}")
 
-    _poppler_dir = os.path.join(_BUNDLE_DIR, 'poppler')
+    _poppler_dir = os.path.join(_BUNDLE_DIR, "poppler")
     if os.path.isdir(_poppler_dir):
-        _POPPLER_PATH = _poppler_dir  # Store for explicit use in convert_from_path
-        os.environ['PATH'] = _poppler_dir + os.pathsep + os.environ.get('PATH', '')
+        _POPPLER_PATH = (
+            _poppler_dir  # Store for explicit use in convert_from_path
+        )
+        os.environ["PATH"] = (
+            _poppler_dir + os.pathsep + os.environ.get("PATH", "")
+        )
         print(f"[DEBUG] Poppler configured at: {_poppler_dir}")
     else:
         print(f"[WARNING] Poppler directory not found at: {_poppler_dir}")
 else:
     # Not bundled - check for local installations on Windows
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         import glob
 
         # Auto-detect Tesseract
         if pytesseract:
-            _tesseract_local = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            _tesseract_local = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
             if os.path.isfile(_tesseract_local):
                 pytesseract.pytesseract.tesseract_cmd = _tesseract_local
             _TESSERACT_AVAILABLE = True
 
         # Auto-detect Poppler
-        _poppler_candidates = glob.glob(r'C:\poppler\poppler-*\Library\bin') + [
-            r'C:\poppler\Library\bin',
-            r'C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin',
+        _poppler_candidates = glob.glob(
+            r"C:\poppler\poppler-*\Library\bin"
+        ) + [
+            r"C:\poppler\Library\bin",
+            r"C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin",
         ]
         for _candidate in _poppler_candidates:
-            if os.path.isfile(os.path.join(_candidate, 'pdfinfo.exe')):
+            if os.path.isfile(os.path.join(_candidate, "pdfinfo.exe")):
                 _POPPLER_PATH = _candidate
                 break
     elif pytesseract:
@@ -117,7 +125,9 @@ class PDFProcessor:
         cleaned = re.sub(r"-{2,}", "-", cleaned)
         return cleaned.strip("-")
 
-    def extract_text_from_pdf(self, pdf_path, use_ocr=True, verbose=False, pages=None):
+    def extract_text_from_pdf(
+        self, pdf_path, use_ocr=True, verbose=False, pages=None
+    ):
         """Extrae texto de PDF (digital o escaneado).
 
         Args:
@@ -135,7 +145,9 @@ class PDFProcessor:
                         if page_num < len(doc):
                             text += doc[page_num].get_text()
                     if verbose:
-                        print(f"  [INFO] Extrayendo texto digital de paginas: {[p+1 for p in pages]}")
+                        print(
+                            f"  [INFO] Extrayendo texto digital de paginas: {[p+1 for p in pages]}"
+                        )
                 else:
                     for page in doc:
                         text += page.get_text()
@@ -149,7 +161,11 @@ class PDFProcessor:
                     print(f"  [WARN] Error extrayendo texto digital: {e}")
 
         # Si no hay texto o es muy poco, usa OCR
-        if use_ocr and pytesseract is not None and convert_from_path is not None:
+        if (
+            use_ocr
+            and pytesseract is not None
+            and convert_from_path is not None
+        ):
             if verbose:
                 print(f"  [OCR] Aplicando OCR (documento escaneado)...")
             try:
@@ -159,20 +175,23 @@ class PDFProcessor:
                     for page_num in pages:
                         page_images = convert_from_path(
                             pdf_path,
-                            first_page=page_num + 1,  # pdf2image uses 1-indexed
+                            first_page=page_num
+                            + 1,  # pdf2image uses 1-indexed
                             last_page=page_num + 1,
                             poppler_path=_POPPLER_PATH,
                         )
                         images.extend(page_images)
                     if verbose:
-                        print(f"  [INFO] OCR de paginas: {[p+1 for p in pages]}")
+                        print(
+                            f"  [INFO] OCR de paginas: {[p+1 for p in pages]}"
+                        )
                 else:
                     # First, try to convert PDF to images (requires Poppler)
                     images = convert_from_path(
                         pdf_path,
                         first_page=1,
                         last_page=3,
-                        poppler_path=_POPPLER_PATH  # Pass poppler path explicitly
+                        poppler_path=_POPPLER_PATH,  # Pass poppler path explicitly
                     )  # Solo primeras 3 páginas (fallback)
                 if verbose:
                     print(f"  [OK] PDF convertido a {len(images)} imagenes")
@@ -187,14 +206,19 @@ class PDFProcessor:
                 except Exception:
                     pass
                 for i, image in enumerate(images):
-                    ocr_text = pytesseract.image_to_string(image, lang=ocr_lang)
+                    ocr_text = pytesseract.image_to_string(
+                        image, lang=ocr_lang
+                    )
                     text += ocr_text
                     if verbose:
-                        print(f"  [OK] OCR pagina {i+1}: {len(ocr_text)} caracteres extraidos")
+                        print(
+                            f"  [OK] OCR pagina {i+1}: {len(ocr_text)} caracteres extraidos"
+                        )
             except Exception as e:
                 if verbose:
                     print(f"  [ERROR] Error en OCR: {type(e).__name__}: {e}")
                     import traceback
+
                     traceback.print_exc()
                 return ""
 
@@ -327,7 +351,8 @@ class PDFProcessor:
 
     def extract_date_candidates(self, text: str):
         """Devuelve lista de fechas (normalizadas) encontradas en el texto.
-        Prioritizes dates with labels like 'FECHA DE EXAMEN', 'FECHA DE EVALUACION'."""
+        Prioritizes dates with labels like 'FECHA DE EXAMEN', 'FECHA DE EVALUACION'.
+        """
         if not text:
             return []
 
@@ -335,7 +360,12 @@ class PDFProcessor:
 
         # 1. Try labeled dates first (highest priority)
         labeled_patterns = [
-            r"(?:FECHA\s+DE\s+EVALUACI[OÓ]N|FECHA\s+DE\s+EXAMEN(?:\s+INICIAL)?|F\.\s*DE\s+EXAMEN|FECHA\s+EXAMEN|FECHA\s+DE\s+ATENCI[OÓ]N)\s*[:\-]?\s*" + date_re,
+            r"(?:FECHA\s+DE\s+EVALUACI[OÓ]N|FECHA\s+DE\s+EXAMEN(?:\s+INICIAL)?|F\.\s*DE\s+EXAMEN|FECHA\s+EXAMEN|FECHA\s+DE\s+ATENCI[OÓ]N|FECHA\s+DE\s+APTITUD)\s*[:\-]?\s*"
+            + date_re,
+            # "FECHA:" near patient context (after NOMBRES/APELLIDOS line, not doc header)
+            r"(?:APELLIDOS|NOMBRES|NOMBRE).{0,80}FECHA\s*[:\-]\s*" + date_re,
+            # Standalone "FECHA:" label (lower priority, may match doc header date)
+            r"(?<!\w)FECHA\s*[:\-]\s*" + date_re,
         ]
         labeled_dates = []
         for pat in labeled_patterns:
@@ -411,15 +441,20 @@ class PDFProcessor:
         ]
         for pat in checkbox_patterns:
             for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                canonical = self._EXAM_LABEL_MAP.get(m.group(1).upper().strip())
+                canonical = self._EXAM_LABEL_MAP.get(
+                    m.group(1).upper().strip()
+                )
                 if canonical:
                     prioritized.append(canonical)
 
         # 2. Labeled on same line: "TIPO DE EXAMEN: PREOCUPACIONAL"
         for line in text.split("\n"):
             labeled = re.findall(
-                r"TIPO\s+DE\s+(?:EXAMEN|EVALUACI[OÓ]N)\s*[:\-]\s*(" + _EXAM_RE + r")",
-                line, flags=re.IGNORECASE,
+                r"TIPO\s+DE\s+(?:EXAMEN|EVALUACI[OÓ]N)\s*[:\-]\s*("
+                + _EXAM_RE
+                + r")",
+                line,
+                flags=re.IGNORECASE,
             )
             for match in labeled:
                 canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
@@ -429,7 +464,8 @@ class PDFProcessor:
         # 3. Contextual: "EXAMEN MÉDICO PERIODICO"
         contextual = re.findall(
             r"EXAMEN\s+M[EÉ]DICO\s+(" + _EXAM_RE + r")",
-            text, flags=re.IGNORECASE,
+            text,
+            flags=re.IGNORECASE,
         )
         for match in contextual:
             canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
@@ -441,10 +477,12 @@ class PDFProcessor:
 
         # 4. Fallback: any exam type keyword in text
         upper = text.upper()
-        normalized = upper.replace("PRE-OCUPACIONAL", "PREOCUPACIONAL") \
-                         .replace("POST-OCUPACIONAL", "POSTOCUPACIONAL") \
-                         .replace("PRE OCUPACIONAL", "PREOCUPACIONAL") \
-                         .replace("POST OCUPACIONAL", "POSTOCUPACIONAL")
+        normalized = (
+            upper.replace("PRE-OCUPACIONAL", "PREOCUPACIONAL")
+            .replace("POST-OCUPACIONAL", "POSTOCUPACIONAL")
+            .replace("PRE OCUPACIONAL", "PREOCUPACIONAL")
+            .replace("POST OCUPACIONAL", "POSTOCUPACIONAL")
+        )
         exam_types = [
             "PREOCUPACIONAL",
             "POSTOCUPACIONAL",
@@ -458,18 +496,58 @@ class PDFProcessor:
 
     # Words that should not appear in a person's name (noise from OCR)
     _NAME_NOISE_WORDS = {
-        "AREA", "DNI", "CARGO", "PUESTO", "FECHA", "EMPRESA", "RUC",
-        "TELEFONO", "CELULAR", "CORREO", "EMAIL", "DIRECCION",
-        "DISTRITO", "PROVINCIA", "DEPARTAMENTO", "PERU", "LIMA",
-        "CARNET", "EXTRANJERIA", "DOCUMENTO", "IDENTIDAD",
-        "TRABAJADOR", "PACIENTE", "EVALUADO", "EXAMINADO",
-        "CONTRATA", "CONTRATISTA", "SAC", "SRL", "EIRL",
-        "OCUPACIONAL", "MEDICO", "EXAMEN", "RESULTADO",
-        "INGRESO", "EGRESO", "PERIODICO", "PREOCUPACIONAL",
-        "POSTOCUPACIONAL", "RETIRO",
-        "TIPO", "EVALUACION", "FORMATOS", "PARA", "CONSENTIMIENTO",
-        "INFORMADO", "NUMERO", "PASAPORTE", "SERVICIOS",
-        "LOGISTICA", "INFORME", "LLENADO",
+        "AREA",
+        "DNI",
+        "CARGO",
+        "PUESTO",
+        "FECHA",
+        "EMPRESA",
+        "RUC",
+        "TELEFONO",
+        "CELULAR",
+        "CORREO",
+        "EMAIL",
+        "DIRECCION",
+        "DISTRITO",
+        "PROVINCIA",
+        "DEPARTAMENTO",
+        "PERU",
+        "LIMA",
+        "CARNET",
+        "EXTRANJERIA",
+        "DOCUMENTO",
+        "IDENTIDAD",
+        "TRABAJADOR",
+        "PACIENTE",
+        "EVALUADO",
+        "EXAMINADO",
+        "CONTRATA",
+        "CONTRATISTA",
+        "SAC",
+        "SRL",
+        "EIRL",
+        "OCUPACIONAL",
+        "MEDICO",
+        "EXAMEN",
+        "RESULTADO",
+        "INGRESO",
+        "EGRESO",
+        "PERIODICO",
+        "PREOCUPACIONAL",
+        "POSTOCUPACIONAL",
+        "RETIRO",
+        "TIPO",
+        "EVALUACION",
+        "FORMATOS",
+        "PARA",
+        "CONSENTIMIENTO",
+        "INFORMADO",
+        "NUMERO",
+        "PASAPORTE",
+        "SERVICIOS",
+        "LOGISTICA",
+        "INFORME",
+        "LLENADO",
     }
 
     def _clean_person_name(self, raw: str) -> str:
@@ -694,12 +772,10 @@ class PDFProcessor:
         # Hudbay logo OCRs as variations: "H D BAY", "H DB AY", "H UDB AY", "HUDBAY"
         # Also look for Hudbay document IDs and explicit mentions
         hudbay_patterns = [
-            r"H\s*\.?\s*U?\s*D\s*B\s*AY",          # H D BAY, H DB AY, H UDB AY, HUDBAY
-            r"HUDBAY",                                # explicit mention
-            r"FOR-SS[O0]-\d{3}",                      # Hudbay document ID (FOR-SSO-293)
+            r"H\s*U\s*D\s*B\s*A\s*Y",  # HUDBAY with optional spaces (OCR variants)
+            r"FOR-SS[O0]-\d{3}",  # Hudbay document ID (FOR-SSO-293)
             r"FORMATOS\s+PARA\s+LA\s+VALORACI[OÓ]N\s+DE\s+LA\s+APTITUD",  # Hudbay form title
-            r"AUTORIZADO\s+POR\s+HUDBAY",             # "Autorizado por Hudbay"
-            r"\bHBP\b",                                # Hudbay Perú abbreviation
+            r"AUTORIZADO\s+POR\s+HUDBAY",  # "Autorizado por Hudbay"
         ]
         for pat in hudbay_patterns:
             if re.search(pat, upper):
@@ -733,14 +809,18 @@ class PDFProcessor:
 
     @staticmethod
     def load_excel_reference(excel_path):
-        """Load an Excel file and build a DNI -> paciente lookup dict.
+        """Load an Excel file and build a DNI-keyed lookup dict.
 
-        Reads the 'CARGAS EN MEDIWEB' sheet and maps the 'documento' column
-        (DNI) to the 'paciente' column (corrected name).
-        Returns dict {dni_string: paciente_name}.
+        Reads the 'CARGAS EN MEDIWEB' sheet (or active sheet) and maps the
+        'documento' column (DNI) to a dict with 'paciente' and optionally
+        'nombre_excel' (the expected filename for comparison).
+
+        Returns dict {dni_string: {"paciente": str, "nombre_excel": str|None}}.
         """
         if load_workbook is None:
-            raise ImportError("openpyxl is required to read Excel files. Install with: pip install openpyxl")
+            raise ImportError(
+                "openpyxl is required to read Excel files. Install with: pip install openpyxl"
+            )
 
         wb = load_workbook(excel_path, read_only=True, data_only=True)
 
@@ -757,11 +837,14 @@ class PDFProcessor:
 
         doc_idx = None
         pac_idx = None
+        nombre_excel_idx = None
         for i, h in enumerate(headers):
             if "documento" in h or h == "dni":
                 doc_idx = i
             if "paciente" in h or h == "nombre" or h == "name":
                 pac_idx = i
+            if "nombre excel" in h or "nombre_excel" in h:
+                nombre_excel_idx = i
 
         if doc_idx is None or pac_idx is None:
             wb.close()
@@ -776,7 +859,12 @@ class PDFProcessor:
             pac_val = row[pac_idx] if pac_idx < len(row) else None
             if doc_val and pac_val:
                 dni_key = str(doc_val).strip()
-                lookup[dni_key] = str(pac_val).strip()
+                entry = {"paciente": str(pac_val).strip(), "nombre_excel": None}
+                if nombre_excel_idx is not None:
+                    ne_val = row[nombre_excel_idx] if nombre_excel_idx < len(row) else None
+                    if ne_val:
+                        entry["nombre_excel"] = str(ne_val).strip()
+                lookup[dni_key] = entry
 
         wb.close()
         return lookup
@@ -811,27 +899,57 @@ class PDFProcessor:
 
         return extracted_name
 
-    def analyze(self, pdf_path, original_filename=None, verbose=False, excel_lookup=None):
+    def analyze(
+        self,
+        pdf_path,
+        original_filename=None,
+        verbose=False,
+        excel_lookup=None,
+        forced_format=None,
+    ):
         """
         Analiza un PDF y devuelve candidatos + valores por defecto para armar el nombre en UI.
+        forced_format: If set ('hudbay' or 'standard'), skip auto-detection and use this format.
         """
         if verbose:
-            ocr_status = "disponible" if (pytesseract and convert_from_path) else "NO disponible"
+            ocr_status = (
+                "disponible"
+                if (pytesseract and convert_from_path)
+                else "NO disponible"
+            )
             print(f"  [INFO] OCR {ocr_status}")
 
         # Determine page-specific extraction based on format
-        detected_fmt = self.detect_format(original_filename)
-        pages = None
-        if detected_fmt == "hudbay":
-            pages = [0]  # Page 1 only
+        if forced_format:
+            detected_fmt = forced_format
             if verbose:
-                print(f"  [INFO] Formato Hudbay detectado -> extrayendo solo pagina 1")
-        elif detected_fmt == "standard":
-            pages = [1]  # Page 2 only
-            if verbose:
-                print(f"  [INFO] Formato Estandar detectado -> extrayendo solo pagina 2")
+                print(f"  [INFO] Formato forzado por usuario: {forced_format}")
+        else:
+            detected_fmt = self.detect_format(original_filename)
 
-        text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=pages)
+        text = None
+        if detected_fmt == "hudbay":
+            text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[0])
+            if verbose:
+                print(f"  [INFO] Formato Hudbay -> extrayendo solo pagina 1")
+        elif detected_fmt == "standard":
+            text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[1])
+            if verbose:
+                print(f"  [INFO] Formato Estandar -> extrayendo solo pagina 2")
+        else:
+            # Unknown filename: read page 1 first to detect format from content
+            page1_text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[0])
+            content_fmt = self.detect_format_from_content(page1_text)
+            if content_fmt == "hudbay":
+                detected_fmt = "hudbay"
+                text = page1_text
+                if verbose:
+                    print(f"  [INFO] Formato Hudbay detectado por contenido -> usando pagina 1")
+            else:
+                detected_fmt = "standard"
+                text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[1])
+                if verbose:
+                    print(f"  [INFO] Formato Estandar (por defecto) -> extrayendo solo pagina 2")
         filename_data = (
             self.extract_from_filename(original_filename)
             if original_filename
@@ -873,18 +991,26 @@ class PDFProcessor:
             ),
         }
 
-        # Excel cross-reference: if we have a DNI and an Excel lookup, try to match
+        # Excel cross-reference: lookup returns {dni: {"paciente": ..., "nombre_excel": ...}}
+        nombre_excel = None
         if excel_lookup and candidates["dni"]:
             first_dni = candidates["dni"][0]
-            first_name = candidates["nombre"][0] if candidates["nombre"] else ""
-            matched = self.match_name_from_excel(first_name, first_dni, excel_lookup)
-            if matched and matched != first_name:
-                # Prepend the Excel name as the top candidate
-                candidates["nombre"] = self._dedupe_keep_order(
-                    [self._clean_spaces(matched)] + candidates["nombre"]
-                )
-                if verbose:
-                    print(f"  [EXCEL] Nombre corregido por Excel: '{matched}' (DNI: {first_dni})")
+            excel_entry = excel_lookup.get(first_dni)
+            if excel_entry:
+                pac_name = excel_entry.get("paciente", "")
+                if pac_name:
+                    pac_clean = self._clean_spaces(pac_name)
+                    # Always prepend the Excel paciente name as the top candidate
+                    candidates["nombre"] = self._dedupe_keep_order(
+                        [pac_clean] + candidates["nombre"]
+                    )
+                    if verbose:
+                        print(f"  [EXCEL] Nombre encontrado en Excel: '{pac_clean}' (DNI: {first_dni})")
+                ne = excel_entry.get("nombre_excel")
+                if ne:
+                    nombre_excel = ne
+                    if verbose:
+                        print(f"  [EXCEL] Nombre excel de referencia: '{nombre_excel}'")
 
         if verbose:
             print(f"\n[DEBUG] Candidatos encontrados:")
@@ -906,7 +1032,6 @@ class PDFProcessor:
             success = False
             notes.append("No se detectó DNI (requerido).")
         if not defaults["fecha"]:
-            # no lo hacemos hard-fail, pero lo reportamos
             notes.append("No se detectó fecha de evaluación.")
 
         if defaults["dni"]:
@@ -916,15 +1041,22 @@ class PDFProcessor:
                 empresa=defaults["empresa"],
                 tipo_examen=defaults["tipo_examen"],
                 fecha=defaults["fecha"],
+                fmt=detected_fmt or "standard",
             )
         else:
             suggested = ""
 
-        # Detect format: content-based detection takes priority over filename
-        if not detected_fmt:
-            detected_fmt = self.detect_format_from_content(text)
-        if not detected_fmt:
-            detected_fmt = self.detect_format(original_filename)
+        # Calculate match percentage against "nombre excel" column
+        match_percentage = None
+        if nombre_excel and suggested:
+            ratio = difflib.SequenceMatcher(
+                None,
+                suggested.upper().replace(".PDF", ""),
+                nombre_excel.upper().replace(".PDF", ""),
+            ).ratio()
+            match_percentage = round(ratio * 100, 1)
+
+        # detected_fmt is already set above (from filename or content-based detection)
         return {
             "success": success and bool(suggested),
             "suggested_name": suggested or None,
@@ -936,6 +1068,8 @@ class PDFProcessor:
             ),
             "notes": notes,
             "detected_format": detected_fmt,
+            "nombre_excel": nombre_excel,
+            "match_percentage": match_percentage,
         }
 
     # Reverse map: abbreviation -> full exam type name
@@ -959,7 +1093,9 @@ class PDFProcessor:
         - Unknown:  generic heuristic extraction
         """
         parts = {}
-        name_without_ext = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
+        name_without_ext = (
+            filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
+        )
         if not name_without_ext:
             return parts
 
@@ -991,7 +1127,9 @@ class PDFProcessor:
 
         idx = 0
         # 1. Date (DD.MM.YY)
-        if idx < len(tokens) and re.match(r"\d{1,2}\.\d{1,2}\.\d{2,4}$", tokens[idx]):
+        if idx < len(tokens) and re.match(
+            r"\d{1,2}\.\d{1,2}\.\d{2,4}$", tokens[idx]
+        ):
             parts["date"] = tokens[idx]
             idx += 1
 
@@ -1046,7 +1184,10 @@ class PDFProcessor:
             idx_end -= 1
 
         # CMESPINAR
-        if idx_end >= idx_start and segments[idx_end].strip().upper() == "CMESPINAR":
+        if (
+            idx_end >= idx_start
+            and segments[idx_end].strip().upper() == "CMESPINAR"
+        ):
             idx_end -= 1
 
         # Exam type (abbreviation or full)
@@ -1058,7 +1199,7 @@ class PDFProcessor:
 
         # Middle segments: NOMBRE and EMPRESA
         # We need to figure out where NOMBRE ends and EMPRESA begins
-        middle = segments[idx_start:idx_end + 1]
+        middle = segments[idx_start : idx_end + 1]
         if len(middle) >= 2:
             # First middle segment is person name, rest is company
             parts["person_name"] = middle[0].strip()
@@ -1090,7 +1231,9 @@ class PDFProcessor:
             parts["dni"] = dni_match.group(1)
 
         # Busca tipo de examen (full names and abbreviations)
-        all_exam_tokens = list(self._EXAM_TYPE_ABBR.keys()) + list(self._ABBR_TO_EXAM_TYPE.keys())
+        all_exam_tokens = list(self._EXAM_TYPE_ABBR.keys()) + list(
+            self._ABBR_TO_EXAM_TYPE.keys()
+        )
         upper_name = name_without_ext.upper()
         for token in all_exam_tokens:
             if token in upper_name:
@@ -1122,10 +1265,15 @@ class PDFProcessor:
             company_words = company_clean.split()
             if len(company_words) > 4:
                 important_words = [
-                    w for w in company_words[:6]
+                    w
+                    for w in company_words[:6]
                     if w.upper() not in ["MECANICA", "REVESTIMIENTO", "Y"]
                 ]
-                company_words = important_words[:4] if important_words else company_words[:3]
+                company_words = (
+                    important_words[:4]
+                    if important_words
+                    else company_words[:3]
+                )
             else:
                 company_words = company_words[:4]
             if company_words:
@@ -1135,16 +1283,18 @@ class PDFProcessor:
 
     # Field highlight colors
     _FIELD_COLORS = {
-        'dni': '#ff6b6b',
-        'nombre': '#4ecdc4',
-        'empresa': '#45b7d1',
-        'tipo_examen': '#f7b731',
-        'fecha': '#5f27cd',
+        "dni": "#ff6b6b",
+        "nombre": "#4ecdc4",
+        "empresa": "#45b7d1",
+        "tipo_examen": "#f7b731",
+        "fecha": "#5f27cd",
     }
 
     MAX_PREVIEW_PAGES = 1  # Only load the single page used for extraction
 
-    def generate_preview_single_page(self, pdf_path, defaults, page_num=0, max_width=500):
+    def generate_preview_single_page(
+        self, pdf_path, defaults, page_num=0, max_width=500
+    ):
         """Render a single PDF page as JPEG and find bounding boxes for field values.
 
         Returns dict with 'page' (image, width, height, highlights, page number)
@@ -1153,12 +1303,18 @@ class PDFProcessor:
         if not defaults:
             defaults = {}
 
-        result = self._preview_digital_single(pdf_path, defaults, page_num, max_width)
+        result = self._preview_digital_single(
+            pdf_path, defaults, page_num, max_width
+        )
         if result is None:
-            result = self._preview_ocr_single(pdf_path, defaults, page_num, max_width)
+            result = self._preview_ocr_single(
+                pdf_path, defaults, page_num, max_width
+            )
         return result
 
-    def generate_preview_with_highlights(self, pdf_path, defaults, max_width=500):
+    def generate_preview_with_highlights(
+        self, pdf_path, defaults, max_width=500
+    ):
         """Render PDF pages as images and find bounding boxes for field values.
 
         Returns dict with 'pages' list plus 'total_pages' count.
@@ -1195,24 +1351,26 @@ class PDFProcessor:
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            pil_img = Image.frombytes(
+                "RGB", (pix.width, pix.height), pix.samples
+            )
             buf = io.BytesIO()
-            pil_img.save(buf, format='JPEG', quality=75)
-            img_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+            pil_img.save(buf, format="JPEG", quality=75)
+            img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
             highlights = self._find_highlights_digital(page, defaults, zoom)
             capped_total = min(total, self.MAX_PREVIEW_PAGES)
             doc.close()
 
             return {
-                'page': {
-                    'image': f'data:image/jpeg;base64,{img_b64}',
-                    'width': pix.width,
-                    'height': pix.height,
-                    'highlights': highlights,
-                    'page': page_num + 1,
+                "page": {
+                    "image": f"data:image/jpeg;base64,{img_b64}",
+                    "width": pix.width,
+                    "height": pix.height,
+                    "highlights": highlights,
+                    "page": page_num + 1,
                 },
-                'total_pages': capped_total,
+                "total_pages": capped_total,
             }
         except Exception:
             return None
@@ -1251,8 +1409,8 @@ class PDFProcessor:
             scale_y = img_height / orig_h
 
             buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=75)
-            img_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+            img.save(buf, format="JPEG", quality=75)
+            img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
             # OCR language detection
             ocr_lang = "spa+eng"
@@ -1266,17 +1424,19 @@ class PDFProcessor:
             ocr_data = pytesseract.image_to_data(
                 orig_img, lang=ocr_lang, output_type=pytesseract.Output.DICT
             )
-            highlights = self._find_highlights_ocr(ocr_data, defaults, scale_x, scale_y)
+            highlights = self._find_highlights_ocr(
+                ocr_data, defaults, scale_x, scale_y
+            )
 
             return {
-                'page': {
-                    'image': f'data:image/jpeg;base64,{img_b64}',
-                    'width': img_width,
-                    'height': img_height,
-                    'highlights': highlights,
-                    'page': page_num + 1,
+                "page": {
+                    "image": f"data:image/jpeg;base64,{img_b64}",
+                    "width": img_width,
+                    "height": img_height,
+                    "highlights": highlights,
+                    "page": page_num + 1,
                 },
-                'total_pages': total,
+                "total_pages": total,
             }
         except Exception:
             return None
@@ -1294,31 +1454,33 @@ class PDFProcessor:
                 if normalized != val_str:
                     rects = page.search_for(normalized)
             # Fallback: search for first word only
-            if not rects and ' ' in val_str:
+            if not rects and " " in val_str:
                 first_word = val_str.split()[0]
                 rects = page.search_for(first_word)
             for rect in rects:
                 w = (rect.x1 - rect.x0) * zoom
                 h = (rect.y1 - rect.y0) * zoom
                 if w > 1 and h > 1:  # Skip degenerate rectangles
-                    highlights.append({
-                        'field': field,
-                        'color': self._FIELD_COLORS[field],
-                        'x': rect.x0 * zoom,
-                        'y': rect.y0 * zoom,
-                        'w': w,
-                        'h': h,
-                    })
+                    highlights.append(
+                        {
+                            "field": field,
+                            "color": self._FIELD_COLORS[field],
+                            "x": rect.x0 * zoom,
+                            "y": rect.y0 * zoom,
+                            "w": w,
+                            "h": h,
+                        }
+                    )
         return highlights
 
     def _find_highlights_ocr(self, ocr_data, defaults, scale_x, scale_y):
         """Find bounding boxes for field values in OCR data."""
         highlights = []
-        words = ocr_data.get('text', [])
-        lefts = ocr_data.get('left', [])
-        tops = ocr_data.get('top', [])
-        widths = ocr_data.get('width', [])
-        heights = ocr_data.get('height', [])
+        words = ocr_data.get("text", [])
+        lefts = ocr_data.get("left", [])
+        tops = ocr_data.get("top", [])
+        widths = ocr_data.get("width", [])
+        heights = ocr_data.get("height", [])
         n = len(words)
 
         for field, value in defaults.items():
@@ -1333,18 +1495,18 @@ class PDFProcessor:
             for i in range(n):
                 if found:
                     break
-                w_i = (words[i] or '').strip()
+                w_i = (words[i] or "").strip()
                 if not w_i:
                     continue
 
                 # Try concatenating words i..j to match the full value
-                concat = ''
+                concat = ""
                 matched_indices = []
                 for j in range(i, min(i + 12, n)):
-                    w_j = (words[j] or '').strip()
+                    w_j = (words[j] or "").strip()
                     if not w_j:
                         continue
-                    concat = (concat + ' ' + w_j).strip() if concat else w_j
+                    concat = (concat + " " + w_j).strip() if concat else w_j
                     matched_indices.append(j)
                     concat_upper = concat.upper()
                     concat_norm = self._normalize_for_search(concat_upper)
@@ -1358,14 +1520,16 @@ class PDFProcessor:
                         h = y1 - y0
                         # Only add if dimensions are valid
                         if w > 2 and h > 2:
-                            highlights.append({
-                                'field': field,
-                                'color': self._FIELD_COLORS[field],
-                                'x': x0 * scale_x,
-                                'y': y0 * scale_y,
-                                'w': w * scale_x,
-                                'h': h * scale_y,
-                            })
+                            highlights.append(
+                                {
+                                    "field": field,
+                                    "color": self._FIELD_COLORS[field],
+                                    "x": x0 * scale_x,
+                                    "y": y0 * scale_y,
+                                    "w": w * scale_x,
+                                    "h": h * scale_y,
+                                }
+                            )
                         found = True
                         break
 
@@ -1374,7 +1538,7 @@ class PDFProcessor:
                 first_word = value_words[0]
                 first_norm = self._normalize_for_search(first_word)
                 for i in range(n):
-                    w_i = (words[i] or '').strip().upper()
+                    w_i = (words[i] or "").strip().upper()
                     if not w_i:
                         continue
                     w_i_norm = self._normalize_for_search(w_i)
@@ -1382,7 +1546,7 @@ class PDFProcessor:
                         # Found start word — span from here for len(value_words) words
                         matched_indices = []
                         for j in range(i, min(i + len(value_words) + 3, n)):
-                            w_j = (words[j] or '').strip()
+                            w_j = (words[j] or "").strip()
                             if w_j:
                                 matched_indices.append(j)
                             if len(matched_indices) >= len(value_words):
@@ -1390,19 +1554,25 @@ class PDFProcessor:
                         if matched_indices:
                             x0 = min(lefts[k] for k in matched_indices)
                             y0 = min(tops[k] for k in matched_indices)
-                            x1 = max(lefts[k] + widths[k] for k in matched_indices)
-                            y1 = max(tops[k] + heights[k] for k in matched_indices)
+                            x1 = max(
+                                lefts[k] + widths[k] for k in matched_indices
+                            )
+                            y1 = max(
+                                tops[k] + heights[k] for k in matched_indices
+                            )
                             w = x1 - x0
                             h = y1 - y0
                             if w > 2 and h > 2:
-                                highlights.append({
-                                    'field': field,
-                                    'color': self._FIELD_COLORS[field],
-                                    'x': x0 * scale_x,
-                                    'y': y0 * scale_y,
-                                    'w': w * scale_x,
-                                    'h': h * scale_y,
-                                })
+                                highlights.append(
+                                    {
+                                        "field": field,
+                                        "color": self._FIELD_COLORS[field],
+                                        "x": x0 * scale_x,
+                                        "y": y0 * scale_y,
+                                        "w": w * scale_x,
+                                        "h": h * scale_y,
+                                    }
+                                )
                         break
 
         return highlights
@@ -1411,8 +1581,9 @@ class PDFProcessor:
     def _normalize_for_search(value):
         """Normalize a string for fuzzy matching: strip accents for comparison."""
         import unicodedata
-        nfkd = unicodedata.normalize('NFKD', str(value))
-        return ''.join(c for c in nfkd if not unicodedata.combining(c))
+
+        nfkd = unicodedata.normalize("NFKD", str(value))
+        return "".join(c for c in nfkd if not unicodedata.combining(c))
 
     def _preview_digital_pdf(self, pdf_path, defaults, max_width):
         """Use PyMuPDF to render all pages and search for field values."""
@@ -1440,11 +1611,13 @@ class PDFProcessor:
                 mat = fitz.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat, alpha=False)
                 # Convert to JPEG for smaller payload
-                pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                pil_img = Image.frombytes(
+                    "RGB", (pix.width, pix.height), pix.samples
+                )
                 buf = io.BytesIO()
-                pil_img.save(buf, format='JPEG', quality=75)
+                pil_img.save(buf, format="JPEG", quality=75)
                 img_bytes = buf.getvalue()
-                img_b64 = base64.b64encode(img_bytes).decode('ascii')
+                img_b64 = base64.b64encode(img_bytes).decode("ascii")
 
                 # Find bounding boxes for each field value
                 highlights = []
@@ -1459,25 +1632,29 @@ class PDFProcessor:
                         if normalized != val_str:
                             rects = page.search_for(normalized)
                     for rect in rects:
-                        highlights.append({
-                            'field': field,
-                            'color': self._FIELD_COLORS[field],
-                            'x': rect.x0 * zoom,
-                            'y': rect.y0 * zoom,
-                            'w': (rect.x1 - rect.x0) * zoom,
-                            'h': (rect.y1 - rect.y0) * zoom,
-                        })
+                        highlights.append(
+                            {
+                                "field": field,
+                                "color": self._FIELD_COLORS[field],
+                                "x": rect.x0 * zoom,
+                                "y": rect.y0 * zoom,
+                                "w": (rect.x1 - rect.x0) * zoom,
+                                "h": (rect.y1 - rect.y0) * zoom,
+                            }
+                        )
 
-                pages.append({
-                    'image': f'data:image/jpeg;base64,{img_b64}',
-                    'width': pix.width,
-                    'height': pix.height,
-                    'highlights': highlights,
-                    'page': page_num + 1,
-                })
+                pages.append(
+                    {
+                        "image": f"data:image/jpeg;base64,{img_b64}",
+                        "width": pix.width,
+                        "height": pix.height,
+                        "highlights": highlights,
+                        "page": page_num + 1,
+                    }
+                )
 
             doc.close()
-            return {'pages': pages, 'total_pages': total}
+            return {"pages": pages, "total_pages": total}
         except Exception:
             return None
 
@@ -1517,13 +1694,15 @@ class PDFProcessor:
                 scale_y = img_height / orig_h
 
                 buf = io.BytesIO()
-                img.save(buf, format='JPEG', quality=75)
+                img.save(buf, format="JPEG", quality=75)
                 img_bytes = buf.getvalue()
-                img_b64 = base64.b64encode(img_bytes).decode('ascii')
+                img_b64 = base64.b64encode(img_bytes).decode("ascii")
 
                 # OCR with bounding box data on original-size image
                 ocr_data = pytesseract.image_to_data(
-                    orig_img, lang=ocr_lang, output_type=pytesseract.Output.DICT
+                    orig_img,
+                    lang=ocr_lang,
+                    output_type=pytesseract.Output.DICT,
                 )
 
                 highlights = []
@@ -1532,7 +1711,7 @@ class PDFProcessor:
                         continue
                     value_str = str(value).upper()
                     value_norm = self._normalize_for_search(value_str)
-                    words = ocr_data.get('text', [])
+                    words = ocr_data.get("text", [])
                     n = len(words)
                     found = False
                     for i in range(n):
@@ -1540,43 +1719,54 @@ class PDFProcessor:
                             break
                         if not words[i]:
                             continue
-                        concat = ''
+                        concat = ""
                         for j in range(i, min(i + 10, n)):
-                            w = (words[j] or '').strip()
+                            w = (words[j] or "").strip()
                             if not w:
                                 continue
-                            concat = (concat + ' ' + w).strip() if concat else w
+                            concat = (
+                                (concat + " " + w).strip() if concat else w
+                            )
                             concat_upper = concat.upper()
-                            concat_norm = self._normalize_for_search(concat_upper)
-                            if value_str in concat_upper or value_norm in concat_norm:
-                                x0 = ocr_data['left'][i]
-                                y0 = ocr_data['top'][i]
-                                x1 = ocr_data['left'][j] + ocr_data['width'][j]
+                            concat_norm = self._normalize_for_search(
+                                concat_upper
+                            )
+                            if (
+                                value_str in concat_upper
+                                or value_norm in concat_norm
+                            ):
+                                x0 = ocr_data["left"][i]
+                                y0 = ocr_data["top"][i]
+                                x1 = ocr_data["left"][j] + ocr_data["width"][j]
                                 y1 = max(
-                                    ocr_data['top'][k] + ocr_data['height'][k]
+                                    ocr_data["top"][k] + ocr_data["height"][k]
                                     for k in range(i, j + 1)
-                                    if (words[k] or '').strip()
+                                    if (words[k] or "").strip()
                                 )
-                                highlights.append({
-                                    'field': field,
-                                    'color': self._FIELD_COLORS[field],
-                                    'x': x0 * scale_x,
-                                    'y': y0 * scale_y,
-                                    'w': (x1 - x0) * scale_x,
-                                    'h': (y1 - y0) * scale_y,
-                                })
+                                highlights.append(
+                                    {
+                                        "field": field,
+                                        "color": self._FIELD_COLORS[field],
+                                        "x": x0 * scale_x,
+                                        "y": y0 * scale_y,
+                                        "w": (x1 - x0) * scale_x,
+                                        "h": (y1 - y0) * scale_y,
+                                    }
+                                )
                                 found = True
                                 break
 
-                pages.append({
-                    'image': f'data:image/jpeg;base64,{img_b64}',
-                    'width': img_width,
-                    'height': img_height,
-                    'highlights': highlights,
-                    'page': page_num + 1,
-                })
+                pages.append(
+                    {
+                        "image": f"data:image/jpeg;base64,{img_b64}",
+                        "width": img_width,
+                        "height": img_height,
+                        "highlights": highlights,
+                        "page": page_num + 1,
+                    }
+                )
 
-            return {'pages': pages, 'total_pages': len(images)}
+            return {"pages": pages, "total_pages": len(images)}
         except Exception:
             return None
 
@@ -1611,7 +1801,9 @@ class PDFProcessor:
                 else:
                     # Sin DNI no podemos generar nombre
                     if verbose:
-                        print("  [WARN] DNI no encontrado en nombre del archivo")
+                        print(
+                            "  [WARN] DNI no encontrado en nombre del archivo"
+                        )
                     return None, None
 
                 # 2. NOMBRE
@@ -1720,7 +1912,9 @@ class PDFProcessor:
         else:
             # Si no hay DNI, no podemos generar el nombre
             if verbose:
-                print("  [WARN] DNI no encontrado - requerido para generar nombre")
+                print(
+                    "  [WARN] DNI no encontrado - requerido para generar nombre"
+                )
             return None, None
 
         # 2. NOMBRE (persona)
