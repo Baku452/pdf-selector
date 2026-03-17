@@ -888,8 +888,12 @@ class PDFProcessor:
             )
 
         def _cell(row, idx):
-            if idx is not None and idx < len(row) and row[idx]:
-                return str(row[idx]).strip() or None
+            if idx is not None and idx < len(row) and row[idx] is not None:
+                v = row[idx]
+                # Excel stores integers as floats (e.g. 76248882.0 → "76248882")
+                if isinstance(v, float) and v == int(v):
+                    v = int(v)
+                return str(v).strip() or None
             return None
 
         lookup = {}

@@ -114,19 +114,30 @@ def upload_excel():
     _excel_paths[excel_session] = excel_path_str
 
     try:
-        lookup = processor.load_excel_reference(excel_path_str)
-        _excel_lookups[excel_session] = lookup
+        # Always read sheet/column metadata first so the config panel can show
         excel_info = processor.get_excel_info(excel_path_str)
-        return jsonify({
-            'success': True,
-            'excel_session': excel_session,
-            'entries': len(lookup),
-            'filename': file.filename,
-            'sheets': list(excel_info.keys()),
-            'columns': excel_info,
-        })
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+    # Try a default load; if it fails, still return success so the user
+    # can pick the right sheet/columns via the config panel
+    load_error = None
+    try:
+        lookup = processor.load_excel_reference(excel_path_str)
+        _excel_lookups[excel_session] = lookup
+    except Exception as e:
+        _excel_lookups[excel_session] = {}
+        load_error = str(e)
+
+    return jsonify({
+        'success': True,
+        'excel_session': excel_session,
+        'entries': len(_excel_lookups[excel_session]),
+        'filename': file.filename,
+        'sheets': list(excel_info.keys()),
+        'columns': excel_info,
+        'load_error': load_error,
+    })
 
 
 @app.route('/api/configure-excel/<excel_session>', methods=['POST'])

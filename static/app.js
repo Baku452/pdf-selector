@@ -73,7 +73,11 @@ function handleExcelUpload(file) {
             if (!ok || !data.success) throw new Error(data.error || 'Error al procesar Excel');
             excelSession = data.excel_session;
             excelConfigData = { sheets: data.sheets || [], columns: data.columns || {} };
-            statusEl.textContent = `${data.filename} (${data.entries} registros)`;
+            if (data.entries > 0) {
+                statusEl.textContent = `${data.filename} (${data.entries} registros)`;
+            } else {
+                statusEl.textContent = `${data.filename} — selecciona hoja y columnas`;
+            }
             statusEl.classList.add('excel-loaded');
             if (excelArea) excelArea.classList.add('excel-active');
             renderExcelConfigPanel(data);
@@ -112,6 +116,7 @@ function renderExcelConfigPanel(data) {
                 <button class="excel-config-toggle" id="excelConfigToggle" title="Contraer">▲</button>
             </div>
             <div class="excel-config-body" id="excelConfigBody">
+                ${data.load_error ? `<p class="excel-config-hint">⚠ ${escapeHtml(data.load_error)} — selecciona la hoja y columnas correctas y haz clic en Aplicar.</p>` : ''}
                 <div class="excel-config-row">
                     <label class="excel-config-label">Hoja:</label>
                     <select class="excel-config-select" id="excelSheetSel">${sheetOptions}</select>

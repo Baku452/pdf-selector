@@ -531,6 +531,17 @@ header h1 {
     color: #222;
 }
 
+.excel-config-hint {
+    margin: 0 0 0.5rem;
+    font-size: 0.82rem;
+    color: #a05000;
+    background: #fff8e1;
+    border: 1px solid #ffe082;
+    border-radius: 6px;
+    padding: 0.35rem 0.6rem;
+    grid-column: 1 / -1;
+}
+
 .excel-config-actions {
     display: flex;
     align-items: center;
