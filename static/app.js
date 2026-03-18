@@ -2,6 +2,7 @@
 let selectedFiles = [];
 let excelSession = null;
 let excelConfigData = null; // {sheets: [...], columns: {sheetName: [col, ...]}}
+let excelConfigApplied = false; // true after user clicks Aplicar successfully
 const _cardReanalyzers = {}; // file_index -> applyReanalysis(data)
 
 let uploadArea, fileInput, fileList, fileListItems, processBtn, clearBtn, results, resultsContent;
@@ -73,6 +74,8 @@ function handleExcelUpload(file) {
             if (!ok || !data.success) throw new Error(data.error || 'Error al procesar Excel');
             excelSession = data.excel_session;
             excelConfigData = { sheets: data.sheets || [], columns: data.columns || {} };
+            excelConfigApplied = false;
+            updateButtons();
             if (data.entries > 0) {
                 statusEl.textContent = `${data.filename} (${data.entries} registros)`;
             } else {
@@ -88,6 +91,8 @@ function handleExcelUpload(file) {
             if (excelArea) excelArea.classList.remove('excel-active');
             excelSession = null;
             excelConfigData = null;
+            excelConfigApplied = false;
+            updateButtons();
             const panel = document.getElementById('excelConfigPanel');
             if (panel) panel.style.display = 'none';
         });
@@ -215,6 +220,8 @@ function applyExcelConfig() {
         btn.disabled = false;
         btn.textContent = 'Aplicar';
         if (d.success) {
+            excelConfigApplied = true;
+            updateButtons();
             if (status) status.textContent = `✓ ${d.entries} registros cargados`;
             const statusEl = document.getElementById('excelStatus');
             if (statusEl) {
@@ -280,7 +287,13 @@ function updateFileList() {
 }
 
 function updateButtons() {
-    processBtn.disabled = selectedFiles.length === 0;
+    const excelPending = excelSession && !excelConfigApplied;
+    processBtn.disabled = selectedFiles.length === 0 || excelPending;
+    if (excelPending && selectedFiles.length > 0) {
+        processBtn.title = 'Primero aplica la configuración del Excel';
+    } else {
+        processBtn.title = '';
+    }
     clearBtn.style.display = selectedFiles.length > 0 ? 'block' : 'none';
 }
 
