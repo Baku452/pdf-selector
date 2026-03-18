@@ -403,37 +403,77 @@ function buildFinalFilename(fields, include, format, cardEl) {
     return base ? `${base}.pdf` : '';
 }
 
+var BATCH_SIZE = 5; // Files per upload request to avoid 413 errors
+
 function onProcessClick() {
     if (selectedFiles.length === 0) return;
     processBtn.disabled = true;
-    if (processBtn.querySelector('.btn-text')) processBtn.querySelector('.btn-text').textContent = 'Procesando...';
-    if (processBtn.querySelector('.btn-loader')) processBtn.querySelector('.btn-loader').style.display = 'inline-block';
+    var btnText = processBtn.querySelector('.btn-text');
+    var btnLoader = processBtn.querySelector('.btn-loader');
+    if (btnText) btnText.textContent = 'Procesando...';
+    if (btnLoader) btnLoader.style.display = 'inline-block';
     if (results) results.style.display = 'none';
 
-    var formData = new FormData();
-    selectedFiles.forEach(function (file) { formData.append('files', file); });
-    if (excelSession) formData.append('excel_session', excelSession);
+    // Split files into batches
+    var batches = [];
+    for (var i = 0; i < selectedFiles.length; i += BATCH_SIZE) {
+        batches.push(selectedFiles.slice(i, i + BATCH_SIZE));
+    }
 
-    fetch('/api/upload', { method: 'POST', body: formData })
-        .then(function (r) {
-            var contentType = r.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                if (r.status === 413) throw new Error('Archivo(s) demasiado grandes. Máximo 500MB.');
-                throw new Error('Error del servidor (' + r.status + '). Intenta de nuevo.');
-            }
-            return r.json().then(function (data) { return { ok: r.ok, data: data }; });
-        })
-        .then(function (_) {
-            var ok = _.ok, data = _.data;
-            if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
-            displayResults(data.results, data.session_id);
-        })
-        .catch(function (err) { alert('Error: ' + (err.message || err)); })
-        .finally(function () {
+    var sessionId = null;
+    var allResults = [];
+    var fileIndexStart = 0;
+    var totalBatches = batches.length;
+
+    function uploadBatch(batchIdx) {
+        if (batchIdx >= totalBatches) {
+            // All batches done
+            displayResults(allResults, sessionId);
             processBtn.disabled = false;
-            if (processBtn.querySelector('.btn-text')) processBtn.querySelector('.btn-text').textContent = 'Procesar PDFs';
-            if (processBtn.querySelector('.btn-loader')) processBtn.querySelector('.btn-loader').style.display = 'none';
-        });
+            if (btnText) btnText.textContent = 'Procesar PDFs';
+            if (btnLoader) btnLoader.style.display = 'none';
+            return;
+        }
+
+        if (btnText) btnText.textContent = 'Procesando... (' + (batchIdx + 1) + '/' + totalBatches + ')';
+
+        var batch = batches[batchIdx];
+        var formData = new FormData();
+        batch.forEach(function (file) { formData.append('files', file); });
+        if (excelSession) formData.append('excel_session', excelSession);
+        if (sessionId) formData.append('session_id', sessionId);
+        formData.append('file_index_start', String(fileIndexStart));
+
+        fetch('/api/upload', { method: 'POST', body: formData })
+            .then(function (r) {
+                var contentType = r.headers.get('content-type') || '';
+                if (!contentType.includes('application/json')) {
+                    if (r.status === 413) throw new Error('Lote demasiado grande. Reduce el número de archivos.');
+                    throw new Error('Error del servidor (' + r.status + '). Intenta de nuevo.');
+                }
+                return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+            })
+            .then(function (_) {
+                var ok = _.ok, data = _.data;
+                if (!ok) throw new Error(data.error || 'Error al procesar los archivos');
+                if (!sessionId) sessionId = data.session_id;
+                allResults = allResults.concat(data.results || []);
+                // Count files that got a file_index (successfully saved)
+                var saved = (data.results || []).filter(function(r) { return r.file_index != null; }).length;
+                fileIndexStart += saved;
+                uploadBatch(batchIdx + 1);
+            })
+            .catch(function (err) {
+                alert('Error en lote ' + (batchIdx + 1) + ': ' + (err.message || err));
+                processBtn.disabled = false;
+                if (btnText) btnText.textContent = 'Procesar PDFs';
+                if (btnLoader) btnLoader.style.display = 'none';
+                // Show partial results if any
+                if (allResults.length > 0) displayResults(allResults, sessionId);
+            });
+    }
+
+    uploadBatch(0);
 }
 
 function displayResults(resultsData, sessionId) {

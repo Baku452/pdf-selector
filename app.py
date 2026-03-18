@@ -43,12 +43,17 @@ app = Flask(
     static_folder=str(STATIC_DIR),
     static_url_path="/static",
 )
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB per request (batched uploads)
 app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
 app.config['SECRET_KEY'] = 'your-secret-key-here'
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({'error': 'Archivo(s) demasiado grandes para un solo envío. Intenta con menos archivos a la vez.'}), 413
 
 # Allowed extensions
 ALLOWED_EXTENSIONS = {'pdf'}
@@ -177,10 +182,12 @@ def upload_pdf():
     excel_session = request.form.get('excel_session', '').strip()
     excel_lookup = _excel_lookups.get(excel_session) if excel_session else None
 
-    session_id = str(uuid.uuid4())
+    # Support appending to an existing session (for batched uploads)
+    session_id = request.form.get('session_id', '').strip() or str(uuid.uuid4())
     session_path = _session_dir(session_id)
+    file_index_start = int(request.form.get('file_index_start', '0'))
     results = []
-    file_index = 0
+    file_index = file_index_start
 
     for file in files:
         if not allowed_file(file.filename):
