@@ -216,6 +216,7 @@ def configure_excel(excel_session):
             excel_path,
             sheet_name=data.get("sheet") or None,
             dni_col=data.get("dni_col") or None,
+            pac_col=data.get("pac_col") or None,
             hudbay_col=data.get("hudbay_col") or None,
             standard_col=data.get("standard_col") or None,
         )

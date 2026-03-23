@@ -865,6 +865,7 @@ class PDFProcessor:
         excel_path,
         sheet_name=None,
         dni_col=None,
+        pac_col=None,
         hudbay_col=None,
         standard_col=None,
     ):
@@ -913,7 +914,9 @@ class PDFProcessor:
             return None
 
         doc_idx = _find_col(dni_col, "documento", "dni")
-        pac_idx = _find_col(None, "paciente", "nombre", "name")
+        pac_idx = _find_col(
+            pac_col, "paciente", "apellidos", "nombres", "nombre", "name"
+        )
         hudbay_idx = _find_col(
             hudbay_col, "emo hudbay", "hudbay", "nombre excel", "nombre_excel"
         )

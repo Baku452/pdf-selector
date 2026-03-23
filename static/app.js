@@ -174,6 +174,10 @@ function updateColumnSelectors(sheet, allColumns) {
             <select class="excel-config-select" id="excelDniCol">${colOpts}</select>
         </div>
         <div class="excel-config-row">
+            <label class="excel-config-label">Col. Apellidos y Nombres</label>
+            <select class="excel-config-select" id="excelPacCol">${colOpts}</select>
+        </div>
+        <div class="excel-config-row">
             <label class="excel-config-label">Col. Nombre Hudbay</label>
             <select class="excel-config-select" id="excelHudbayCol">${colOpts}</select>
         </div>
@@ -185,6 +189,7 @@ function updateColumnSelectors(sheet, allColumns) {
 
     // Auto-select known column names
     _autoSelectCol('excelDniCol',      cols, ['DNI', 'DOCUMENTO', 'Documento', 'N° DOC']);
+    _autoSelectCol('excelPacCol',      cols, ['PACIENTE', 'APELLIDOS Y NOMBRES', 'APELLIDOS', 'NOMBRES', 'NOMBRE']);
     _autoSelectCol('excelHudbayCol',   cols, ['EMO HUDBAY', 'HUDBAY', 'nombre excel', 'NOMBRE EXCEL']);
     _autoSelectCol('excelStandardCol', cols, ['EMO BAMBAS', 'BAMBAS', 'nombre excel', 'NOMBRE EXCEL']);
 }
@@ -201,6 +206,7 @@ function _autoSelectCol(selId, cols, candidates) {
 function applyExcelConfig() {
     const sheet    = document.getElementById('excelSheetSel')?.value;
     const dni_col  = document.getElementById('excelDniCol')?.value || null;
+    const pac_col  = document.getElementById('excelPacCol')?.value || null;
     const hudbay_col   = document.getElementById('excelHudbayCol')?.value || null;
     const standard_col = document.getElementById('excelStandardCol')?.value || null;
     const btn    = document.getElementById('applyExcelConfigBtn');
@@ -213,7 +219,7 @@ function applyExcelConfig() {
     fetch(`/api/configure-excel/${excelSession}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet, dni_col, hudbay_col, standard_col }),
+        body: JSON.stringify({ sheet, dni_col, pac_col, hudbay_col, standard_col }),
     })
     .then(r => r.json())
     .then(d => {
@@ -531,6 +537,7 @@ function displayResults(resultsData, sessionId) {
         const div = document.createElement('div');
         div.className = 'result-item';
         if (result.file_index != null) div.dataset.fileIndex = String(result.file_index);
+        if (result.match_percentage != null) div.dataset.matchPct = String(result.match_percentage);
 
         // Apply initial Excel match border
         const initExcelInfo = excelSession
@@ -571,18 +578,22 @@ function displayResults(resultsData, sessionId) {
         const FIELD_LABELS = { dni: 'DNI', nombre: 'Nombre', empresa: 'Empresa', tipo_examen: 'Tipo', fecha: 'Fecha' };
 
         div.innerHTML = `
-            <div class="result-header">
+            <div class="result-header" data-action="toggle-collapse">
                 <span class="result-original">${result.original_name}</span>
-                ${extractionPill}
+                <div class="result-header-right">
+                    ${extractionPill}
+                    <button class="collapse-toggle" title="Contraer / Expandir" tabindex="-1">▾</button>
+                </div>
             </div>
 
+            ${excelBannerHTML(initExcelInfo)}
+
+            <div class="result-body">
             ${notes.length ? `
                 <div class="result-notes">
                     ${notes.map(n => `<div class="note-item">${n}</div>`).join('')}
                 </div>
             ` : ''}
-
-            ${excelBannerHTML(initExcelInfo)}
 
             <div class="result-content-split">
                 <div class="result-fields-panel">
@@ -653,9 +664,16 @@ function displayResults(resultsData, sessionId) {
                     </div>
                 </div>
             </div>
+            </div>
         `;
 
         resultsContent.appendChild(div);
+
+        // Collapse toggle
+        div.querySelector('[data-action="toggle-collapse"]').addEventListener('click', () => {
+            div.classList.toggle('collapsed');
+            div.querySelector('.collapse-toggle').textContent = div.classList.contains('collapsed') ? '▸' : '▾';
+        });
 
         // Wire interactions
         const include = {
@@ -805,10 +823,15 @@ function displayResults(resultsData, sessionId) {
                     if (actions) previewBlock.insertBefore(nameRow, actions);
                 }
                 applyExcelStatus(div, excelMatchInfo(true, data.match_percentage, data.nombre_excel));
+                if (data.match_percentage != null) {
+                    div.dataset.matchPct = String(data.match_percentage);
+                    resultsContent.dispatchEvent(new Event('matchPctUpdated'));
+                }
             } else {
                 const info = excelMatchInfo(data.excel_dni_found, null, null);
                 if (info) applyExcelStatus(div, info);
             }
+            updateNombreBadge();
             updatePreview();
         };
 
@@ -1264,6 +1287,56 @@ function displayResults(resultsData, sessionId) {
                 alert('Error: ' + (e.message || e));
             }
         });
+    }
+
+    // Fixed filter widget (only when Excel session active and there are match percentages)
+    const existingWidget = document.getElementById('matchFilterWidget');
+    if (existingWidget) existingWidget.remove();
+
+    const cardsWithPct = Array.from(resultsContent.querySelectorAll('[data-match-pct]'));
+    if (excelSession && cardsWithPct.length > 0) {
+        const widget = document.createElement('div');
+        widget.id = 'matchFilterWidget';
+        widget.className = 'match-filter-widget';
+
+        const updateWidgetCount = () => {
+            const all = Array.from(resultsContent.querySelectorAll('[data-match-pct]'));
+            const pending = all.filter(c => parseFloat(c.dataset.matchPct) < 100).length;
+            widget.querySelector('.widget-count').textContent =
+                `${pending} pendiente${pending !== 1 ? 's' : ''} de ${all.length}`;
+        };
+
+        widget.innerHTML = `
+            <span class="widget-title">Revisión</span>
+            <span class="widget-count"></span>
+            <div class="widget-divider"></div>
+            <button class="widget-btn" id="collapseMatchedBtn">Colapsar completados</button>
+            <button class="widget-btn widget-btn-outline" id="expandAllBtn">Expandir todo</button>
+        `;
+        results.insertBefore(widget, resultsContent);
+        updateWidgetCount();
+
+        document.getElementById('collapseMatchedBtn').addEventListener('click', () => {
+            resultsContent.querySelectorAll('[data-match-pct]').forEach(card => {
+                const pct = parseFloat(card.dataset.matchPct);
+                if (pct >= 100) {
+                    card.classList.add('collapsed');
+                    const btn = card.querySelector('.collapse-toggle');
+                    if (btn) btn.textContent = '▸';
+                }
+            });
+        });
+
+        document.getElementById('expandAllBtn').addEventListener('click', () => {
+            resultsContent.querySelectorAll('.result-item').forEach(card => {
+                card.classList.remove('collapsed');
+                const btn = card.querySelector('.collapse-toggle');
+                if (btn) btn.textContent = '▾';
+            });
+        });
+
+        // Keep count in sync when match_pct changes (reanalysis updates data-match-pct)
+        resultsContent.addEventListener('matchPctUpdated', updateWidgetCount);
     }
 
     // Scroll to results

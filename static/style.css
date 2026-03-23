@@ -338,12 +338,45 @@ header h1 {
     margin-bottom: 15px;
     padding-bottom: 15px;
     border-bottom: 2px solid #f0f0f0;
+    cursor: pointer;
+    user-select: none;
 }
+
+.result-header:hover { background: rgba(0,0,0,0.015); border-radius: 6px; }
+
+.result-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.collapse-toggle {
+    background: none;
+    border: none;
+    font-size: 1rem;
+    color: #aaa;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.15s;
+}
+.result-header:hover .collapse-toggle { color: #555; }
+
+/* Collapsed card: hide body, remove bottom border on header */
+.result-item.collapsed .result-body { display: none; }
+.result-item.collapsed .result-header { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+.result-item.collapsed .excel-status-banner { display: none; }
 
 .result-original {
     color: #222525;
     font-size: 0.9em;
     font-style: italic;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 12px;
 }
 
 .result-suggested {
@@ -665,7 +698,7 @@ header h1 {
 .excel-config-body {
     padding: 1rem 1.1rem 0.9rem;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0.75rem 1.2rem;
     align-items: end;
 }
@@ -1090,4 +1123,65 @@ header h1 {
     .file-list ul {
         grid-template-columns: 1fr;
     }
+}
+
+/* ── Match Filter Toolbar (sticky) ── */
+.match-filter-widget {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #fff;
+    border-bottom: 1.5px solid rgba(7, 128, 128, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.widget-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #078080;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+}
+
+.widget-count {
+    font-size: 0.85rem;
+    color: #555;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.widget-divider {
+    flex: 1;
+}
+
+.widget-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    background: #078080;
+    color: #fff;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.widget-btn:hover { background: #056060; }
+
+.widget-btn.widget-btn-outline {
+    background: transparent;
+    color: #078080;
+    border: 1.5px solid rgba(7, 128, 128, 0.5);
+}
+
+.widget-btn.widget-btn-outline:hover {
+    background: #078080;
+    color: #fff;
 }
