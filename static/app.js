@@ -866,7 +866,7 @@ function displayResults(resultsData, sessionId) {
         // copy
         const copyBtn = div.querySelector('[data-action="copy"]');
         copyBtn.addEventListener('click', async () => {
-            const preview = div.querySelector('[data-role="preview"]').textContent || '';
+            const preview = previewEl.textContent || '';
             if (!preview || preview.startsWith('(')) return;
             try {
                 await navigator.clipboard.writeText(preview);
@@ -882,7 +882,7 @@ function displayResults(resultsData, sessionId) {
         const downloadOneBtn = div.querySelector('[data-action="download-one"]');
         if (downloadOneBtn) {
             downloadOneBtn.addEventListener('click', async () => {
-                const preview = div.querySelector('[data-role="preview"]').textContent || '';
+                const preview = previewEl.textContent || '';
                 if (!preview || preview.startsWith('(')) return;
                 const sid = resultsContent.dataset.sessionId;
                 const idx = div.dataset.fileIndex;
@@ -953,31 +953,31 @@ function displayResults(resultsData, sessionId) {
                     ctx.strokeRect(h.x, h.y, h.w, h.h);
                 });
 
-                // Draw field name tags above each highlight box
-                const tagFontSize = Math.max(10, Math.round(canvas.width * 0.018));
-                const tagPad = Math.round(tagFontSize * 0.35);
-                ctx.font = `600 ${tagFontSize}px system-ui, sans-serif`;
-                highlights.forEach(h => {
-                    const isActive = selectedField === h.field;
-                    const label = FIELD_LABELS[h.field] || h.field;
-                    const tw = ctx.measureText(label).width;
-                    const tagW = tw + tagPad * 2;
-                    const tagH = tagFontSize + tagPad * 2;
-                    const tagX = h.x;
-                    const tagY = h.y - tagH - 2;
-                    const clampedY = Math.max(0, tagY);
+                // Draw field name tag only for the active (hovered/focused) field
+                if (selectedField) {
+                    const tagFontSize = Math.max(10, Math.round(canvas.width * 0.018));
+                    const tagPad = Math.round(tagFontSize * 0.35);
+                    ctx.font = `600 ${tagFontSize}px system-ui, sans-serif`;
+                    highlights.forEach(h => {
+                        if (h.field !== selectedField) return;
+                        const label = FIELD_LABELS[h.field] || h.field;
+                        const tw = ctx.measureText(label).width;
+                        const tagW = tw + tagPad * 2;
+                        const tagH = tagFontSize + tagPad * 2;
+                        const tagX = h.x;
+                        const tagY = h.y - tagH - 2;
+                        const clampedY = Math.max(0, tagY);
 
-                    // Tag background pill
-                    ctx.fillStyle = h.color + (isActive ? 'ff' : 'cc');
-                    ctx.beginPath();
-                    ctx.roundRect(tagX, clampedY, tagW, tagH, tagH / 2);
-                    ctx.fill();
+                        ctx.fillStyle = h.color + 'ff';
+                        ctx.beginPath();
+                        ctx.roundRect(tagX, clampedY, tagW, tagH, tagH / 2);
+                        ctx.fill();
 
-                    // Tag text
-                    ctx.fillStyle = '#fff';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(label, tagX + tagPad, clampedY + tagH / 2);
-                });
+                        ctx.fillStyle = '#fff';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(label, tagX + tagPad, clampedY + tagH / 2);
+                    });
+                }
             };
 
             const redrawAllHighlights = (selectedField) => {
@@ -1052,6 +1052,32 @@ function displayResults(resultsData, sessionId) {
                     }
                 }
                 if (!inserted) pagesWrap.appendChild(canvasWrap);
+
+                // Hover over a highlight region in the canvas → show that field's tag
+                canvas.addEventListener('mousemove', (e) => {
+                    if (!pg.highlights || pg.highlights.length === 0) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const cx = (e.clientX - rect.left) * scaleX;
+                    const cy = (e.clientY - rect.top) * scaleY;
+                    const hit = pg.highlights.find(h =>
+                        cx >= h.x && cx <= h.x + h.w && cy >= h.y && cy <= h.y + h.h
+                    );
+                    const field = hit ? hit.field : null;
+                    if (field !== activeField) {
+                        activeField = field;
+                        canvas.style.cursor = field ? 'crosshair' : '';
+                        redrawAllHighlights(field);
+                    }
+                });
+                canvas.addEventListener('mouseleave', () => {
+                    if (activeField !== null) {
+                        activeField = null;
+                        canvas.style.cursor = '';
+                        redrawAllHighlights(null);
+                    }
+                });
 
                 const img = new window.Image();
                 img.onload = () => {
