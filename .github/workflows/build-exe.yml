@@ -115,3 +115,17 @@ jobs:
         with:
           files: dist/PDF_Renombrar_Archivos-${{ env.APP_VERSION }}.exe
           generate_release_notes: true
+
+      - name: Update rolling "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm UTC")
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          gh release delete latest --yes 2>$null; $true
+          git push origin :refs/tags/latest 2>$null; $true
+          gh release create latest dist/PDF_Renombrar_Archivos-${{ env.APP_VERSION }}.exe `
+            --title "Latest Build" `
+            --notes "Automated build from commit $sha on $date" `
+            --prerelease
