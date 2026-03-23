@@ -73,34 +73,45 @@ jobs:
           python -c "from openpyxl import load_workbook; print('openpyxl OK:', load_workbook)"
           python -c "import et_xmlfile; print('et_xmlfile OK')"
 
+      - name: Set version
+        run: |
+          if ("${{ github.ref }}" -like "refs/tags/*") {
+            $version = "${{ github.ref_name }}"
+          } else {
+            $sha = "${{ github.sha }}".Substring(0, 7)
+            $version = "dev-$sha"
+          }
+          Write-Host "APP_VERSION=$version"
+          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+
       - name: Build EXE with PyInstaller
         run: pyinstaller pdfnamesetter.spec --noconfirm
 
       - name: Verify bundled files
         run: |
-          Write-Host "=== Built EXE size ==="
-          Get-ChildItem dist\PDF_Renombrar_Archivos.exe | Format-Table Name, Length
-          Write-Host "=== EXE size in MB ==="
-          $size = (Get-Item dist\PDF_Renombrar_Archivos.exe).Length / 1MB
+          $exe = Get-ChildItem dist\PDF_Renombrar_Archivos-*.exe | Select-Object -First 1
+          Write-Host "=== Built EXE: $($exe.Name) ==="
+          $size = $exe.Length / 1MB
           Write-Host "$size MB"
 
       - name: Smoke test - verify openpyxl works in exe
         run: |
+          $exe = (Get-ChildItem dist\PDF_Renombrar_Archivos-*.exe | Select-Object -First 1).FullName
           Write-Host "=== Testing openpyxl import inside bundled exe ==="
-          $proc = Start-Process -FilePath "dist\PDF_Renombrar_Archivos.exe" -ArgumentList "--test-imports" -PassThru -NoNewWindow -Wait -RedirectStandardOutput "stdout.txt" -RedirectStandardError "stderr.txt"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--test-imports" -PassThru -NoNewWindow -Wait -RedirectStandardOutput "stdout.txt" -RedirectStandardError "stderr.txt"
           if (Test-Path stdout.txt) { Get-Content stdout.txt }
           if (Test-Path stderr.txt) { Get-Content stderr.txt }
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PDF_Renombrar_Archivos-Windows
-          path: dist/PDF_Renombrar_Archivos.exe
+          name: PDF_Renombrar_Archivos-${{ env.APP_VERSION }}-Windows
+          path: dist/PDF_Renombrar_Archivos-${{ env.APP_VERSION }}.exe
           retention-days: 30
 
       - name: Create Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/PDF_Renombrar_Archivos.exe
+          files: dist/PDF_Renombrar_Archivos-${{ env.APP_VERSION }}.exe
           generate_release_notes: true

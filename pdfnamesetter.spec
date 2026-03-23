@@ -6,6 +6,9 @@ from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
+# Version from env var (set by CI from git tag, e.g. "v1.2.3") or fallback to "dev"
+_version = os.environ.get('APP_VERSION', 'dev')
+
 # Collect ALL openpyxl files (submodules, data, binaries)
 openpyxl_datas, openpyxl_binaries, openpyxl_hiddenimports = collect_all('openpyxl')
 etxml_datas, etxml_binaries, etxml_hiddenimports = collect_all('et_xmlfile')
@@ -76,7 +79,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='PDF_Renombrar_Archivos',
+    name=f'PDF_Renombrar_Archivos-{_version}',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
