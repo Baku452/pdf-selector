@@ -117,13 +117,13 @@ function renderExcelConfigPanel(data) {
     panel.innerHTML = `
         <div class="excel-config-panel">
             <div class="excel-config-header">
-                <span class="excel-config-title">Configuración de referencia Excel</span>
+                <span class="excel-config-title">Referencia Excel</span>
                 <button class="excel-config-toggle" id="excelConfigToggle" title="Contraer">▲</button>
             </div>
             <div class="excel-config-body" id="excelConfigBody">
-                ${data.load_error ? `<p class="excel-config-hint">⚠ ${escapeHtml(data.load_error)} — selecciona la hoja y columnas correctas y haz clic en Aplicar.</p>` : ''}
+                ${data.load_error ? `<p class="excel-config-hint">⚠ ${escapeHtml(data.load_error)} — verifica la hoja y columnas y haz clic en Aplicar.</p>` : ''}
                 <div class="excel-config-row">
-                    <label class="excel-config-label">Hoja:</label>
+                    <label class="excel-config-label">Hoja</label>
                     <select class="excel-config-select" id="excelSheetSel">${sheetOptions}</select>
                 </div>
                 <div id="excelColConfig"></div>
@@ -170,15 +170,15 @@ function updateColumnSelectors(sheet, allColumns) {
     if (!container) return;
     container.innerHTML = `
         <div class="excel-config-row">
-            <label class="excel-config-label">Columna DNI:</label>
+            <label class="excel-config-label">Col. DNI</label>
             <select class="excel-config-select" id="excelDniCol">${colOpts}</select>
         </div>
         <div class="excel-config-row">
-            <label class="excel-config-label">Nombre ref. Hudbay:</label>
+            <label class="excel-config-label">Col. Nombre Hudbay</label>
             <select class="excel-config-select" id="excelHudbayCol">${colOpts}</select>
         </div>
         <div class="excel-config-row">
-            <label class="excel-config-label">Nombre ref. Estándar:</label>
+            <label class="excel-config-label">Col. Nombre Estándar</label>
             <select class="excel-config-select" id="excelStandardCol">${colOpts}</select>
         </div>
     `;
@@ -305,16 +305,6 @@ function formatFileSize(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-function sanitizePart(value) {
-    if (!value) return '';
-    return String(value)
-        .replace(/[<>:"/\\|?*]/g, '')
-        .trim()
-        .replace(/\s+/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/^_+|_+$/g, '');
-}
-
 function calcMatchPercentage(name1, name2) {
     if (!name1 || !name2) return 0;
     const a = name1.toUpperCase().replace(/\.pdf$/i, '');
@@ -363,6 +353,60 @@ function getSelectedFormat(cardEl) {
 
 // Global list of updatePreview callbacks so radio change can trigger them all
 const _previewUpdaters = [];
+
+/**
+ * Compute Excel match status info from raw result fields.
+ * Returns null when no Excel is loaded.
+ * Matching key: DNI (primary lookup), name similarity (confidence check).
+ */
+function excelMatchInfo(excelDniFnd, matchPct, nombreExcel) {
+    if (excelDniFnd === null || excelDniFnd === undefined) return null;
+    if (excelDniFnd === false) {
+        return { status: 'notfound', matchPct: null };
+    }
+    // DNI was found in Excel
+    if (matchPct == null) {
+        return { status: 'partial', matchPct: null };
+    }
+    if (matchPct >= 80) return { status: 'found',   matchPct };
+    if (matchPct >= 50) return { status: 'partial', matchPct };
+    return                     { status: 'warning', matchPct };
+}
+
+function excelBannerHTML(info) {
+    if (!info) return '';
+    const texts = {
+        found:    { icon: '✓', msg: `Encontrado en Excel` },
+        partial:  { icon: '~', msg: `Coincidencia parcial en Excel` },
+        warning:  { icon: '⚠', msg: `Baja coincidencia en Excel` },
+        notfound: { icon: '✗', msg: 'No encontrado en el Excel' },
+    };
+    const t = texts[info.status];
+    const pctPart = info.matchPct != null ? ` &mdash; <strong>${info.matchPct}%</strong>` : '';
+    return `<div class="excel-status-banner ${info.status}" data-role="excel-banner">
+        <span class="banner-icon">${t.icon}</span>
+        <span>${t.msg}${pctPart}</span>
+    </div>`;
+}
+
+function applyExcelStatus(cardEl, info) {
+    ['excel-found', 'excel-partial', 'excel-warning', 'excel-notfound'].forEach(c => cardEl.classList.remove(c));
+    if (info) cardEl.classList.add('excel-' + info.status);
+    // Update banner text and class
+    const banner = cardEl.querySelector('[data-role="excel-banner"]');
+    if (banner && info) {
+        const texts = {
+            found:    { icon: '✓', msg: 'Encontrado en Excel' },
+            partial:  { icon: '~', msg: 'Coincidencia parcial en Excel' },
+            warning:  { icon: '⚠', msg: 'Baja coincidencia en Excel' },
+            notfound: { icon: '✗', msg: 'No encontrado en el Excel' },
+        };
+        const t = texts[info.status];
+        const pctPart = info.matchPct != null ? ` — ${info.matchPct}%` : '';
+        banner.className = `excel-status-banner ${info.status}`;
+        banner.innerHTML = `<span class="banner-icon">${t.icon}</span><span>${t.msg}${pctPart}</span>`;
+    }
+}
 
 function buildFinalFilename(fields, include, format, cardEl) {
     const dni = (fields.dni || '').trim();
@@ -488,6 +532,12 @@ function displayResults(resultsData, sessionId) {
         div.className = 'result-item';
         if (result.file_index != null) div.dataset.fileIndex = String(result.file_index);
 
+        // Apply initial Excel match border
+        const initExcelInfo = excelSession
+            ? excelMatchInfo(result.excel_dni_found, result.match_percentage, result.nombre_excel)
+            : null;
+        if (initExcelInfo) div.classList.add('excel-' + initExcelInfo.status);
+
         // Hard error (exception)
         if (result.error) {
             div.innerHTML = `
@@ -507,8 +557,9 @@ function displayResults(resultsData, sessionId) {
         const defaults = result.defaults || {};
         const notes = Array.isArray(result.notes) ? result.notes : [];
 
-        const icon = result.success ? '✅' : '⚠️';
-        const iconClass = result.success ? 'success-icon' : 'warn-icon';
+        const extractionPill = result.success
+            ? `<span class="extraction-pill ok">✓ Datos extraídos</span>`
+            : `<span class="extraction-pill warn">⚠ Faltan campos</span>`;
 
         const FIELD_COLORS = {
             dni: '#ff6b6b',
@@ -521,8 +572,8 @@ function displayResults(resultsData, sessionId) {
 
         div.innerHTML = `
             <div class="result-header">
-                <span class="${iconClass}">${icon}</span>
                 <span class="result-original">${result.original_name}</span>
+                ${extractionPill}
             </div>
 
             ${notes.length ? `
@@ -530,6 +581,8 @@ function displayResults(resultsData, sessionId) {
                     ${notes.map(n => `<div class="note-item">${n}</div>`).join('')}
                 </div>
             ` : ''}
+
+            ${excelBannerHTML(initExcelInfo)}
 
             <div class="result-content-split">
                 <div class="result-fields-panel">
@@ -560,30 +613,22 @@ function displayResults(resultsData, sessionId) {
                     </div>
 
                     <div class="preview-block">
-                        <div class="preview-label">Nombre final</div>
-                        <div class="result-suggested" data-role="preview"></div>
-                        ${excelSession ? `
-                        <div class="excel-match-block" data-role="excel-match">
-                            <div class="match-percentage ${result.nombre_excel && result.match_percentage != null ? (result.match_percentage >= 80 ? 'match-good' : result.match_percentage >= 50 ? 'match-medium' : 'match-low') : 'match-hint'}" data-role="match-pct">
-                                ${result.nombre_excel && result.match_percentage != null
-                                    ? `Coincidencia: <strong>${result.match_percentage}%</strong>`
-                                    : result.excel_dni_found === true
-                                        ? 'DNI encontrado &mdash; sin columna &ldquo;nombre excel&rdquo; en el archivo'
-                                        : result.excel_dni_found === false
-                                            ? 'DNI no encontrado en el Excel'
-                                            : 'Sin referencia Excel'}
-                            </div>
-                            ${result.nombre_excel ? `
-                            <div class="excel-name-row">
-                                <span class="excel-name-label">Nombre Excel:</span>
-                                <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(result.nombre_excel)}</span>
-                                <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
-                            </div>
-                            ` : ''}
+                        <div class="preview-label">
+                            Nombre generado
+                            <span class="preview-label-badge" data-role="preview-badge">auto</span>
+                            <button class="btn-regenerate" data-action="regenerate" title="Regenerar desde campos" style="display:none">↺ Regenerar</button>
                         </div>
-                        ` : ''}
+                        <div class="result-suggested" data-role="preview" contenteditable="true" spellcheck="false"></div>
+                        ${(excelSession && result.nombre_excel) ? `
+                        <div class="excel-suggestion" data-role="excel-name-section">
+                            <div class="excel-suggestion-body">
+                                <span class="excel-suggestion-label">Referencia Excel</span>
+                                <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(result.nombre_excel)}</span>
+                            </div>
+                            <button class="btn btn-outline btn-small" data-action="use-excel-name" title="Reemplazar el nombre generado con el del Excel">Aplicar</button>
+                        </div>` : ''}
                         <div class="preview-actions">
-                            <button class="btn btn-secondary btn-small" data-action="copy">Copiar</button>
+                            <button class="btn btn-ghost btn-small" data-action="copy">Copiar</button>
                             ${result.file_index != null ? `<button class="btn btn-primary btn-small" data-action="download-one">Descargar PDF</button>` : ''}
                         </div>
                     </div>
@@ -648,30 +693,53 @@ function displayResults(resultsData, sessionId) {
 
         // Store nombre_excel for this card
         let currentNombreExcel = result.nombre_excel || null;
+        let userEditedPreview = false;
+
+        const previewEl = div.querySelector('[data-role="preview"]');
+        const previewBadge = div.querySelector('[data-role="preview-badge"]');
+        const regenerateBtn = div.querySelector('[data-action="regenerate"]');
+
+        const setPreviewUserEdited = (edited) => {
+            userEditedPreview = edited;
+            if (previewBadge) {
+                previewBadge.textContent = edited ? 'editado' : 'auto';
+                previewBadge.classList.toggle('preview-badge-edited', edited);
+            }
+            if (regenerateBtn) regenerateBtn.style.display = edited ? '' : 'none';
+        };
 
         const updatePreview = () => {
-            const previewEl = div.querySelector('[data-role="preview"]');
+            if (userEditedPreview) return;
             const fields = getFields();
             syncIncludeFromUI();
             const name = buildFinalFilename(fields, include, null, div);
             previewEl.textContent = name || '(completa los campos para generar el nombre)';
 
-            // Update match percentage if nombre_excel exists
-            const matchEl = div.querySelector('[data-role="match-pct"]');
-            if (matchEl && currentNombreExcel && name) {
+            // Update Excel banner when filename changes
+            if (currentNombreExcel && name) {
                 const pct = calcMatchPercentage(name, currentNombreExcel);
-                matchEl.innerHTML = 'Coincidencia: <strong>' + pct + '%</strong>';
-                matchEl.className = 'match-percentage' + (pct >= 80 ? ' match-good' : pct >= 50 ? ' match-medium' : ' match-low');
+                applyExcelStatus(div, excelMatchInfo(true, pct, currentNombreExcel));
             }
         };
         _previewUpdaters.push(updatePreview);
+
+        // Detect user edits on the contenteditable preview
+        previewEl.addEventListener('input', () => setPreviewUserEdited(true));
+
+        // Regenerate button resets to auto-generated name
+        if (regenerateBtn) {
+            regenerateBtn.addEventListener('click', () => {
+                setPreviewUserEdited(false);
+                updatePreview();
+            });
+        }
 
         // "Use excel name" button
         const useExcelBtn = div.querySelector('[data-action="use-excel-name"]');
         if (useExcelBtn && currentNombreExcel) {
             useExcelBtn.addEventListener('click', () => {
-                const previewEl = div.querySelector('[data-role="preview"]');
                 previewEl.textContent = currentNombreExcel;
+                setPreviewUserEdited(true);
             });
         }
 
@@ -712,38 +780,34 @@ function displayResults(resultsData, sessionId) {
                 }
             });
             // Update nombre_excel and match info
-            const matchBlock = div.querySelector('[data-role="excel-match"]');
-            if (matchBlock) {
-                const matchEl = matchBlock.querySelector('[data-role="match-pct"]');
-                if (data.nombre_excel) {
-                    currentNombreExcel = data.nombre_excel;
-                    const neEl = matchBlock.querySelector('[data-role="nombre-excel"]');
-                    if (neEl) neEl.textContent = data.nombre_excel;
-                    // Show nombre-excel row if it was hidden before
-                    let nameRow = matchBlock.querySelector('.excel-name-row');
-                    if (!nameRow) {
-                        nameRow = document.createElement('div');
-                        nameRow.className = 'excel-name-row';
-                        nameRow.innerHTML = `
-                            <span class="excel-name-label">Nombre Excel:</span>
+            if (data.nombre_excel) {
+                currentNombreExcel = data.nombre_excel;
+                const neEl = div.querySelector('[data-role="nombre-excel"]');
+                if (neEl) {
+                    neEl.textContent = data.nombre_excel;
+                } else {
+                    const previewBlock = div.querySelector('.preview-block');
+                    const actions = previewBlock && previewBlock.querySelector('.preview-actions');
+                    const nameRow = document.createElement('div');
+                    nameRow.className = 'excel-suggestion';
+                    nameRow.dataset.role = 'excel-name-section';
+                    nameRow.innerHTML = `
+                        <div class="excel-suggestion-body">
+                            <span class="excel-suggestion-label">Referencia Excel</span>
                             <span class="excel-name-value" data-role="nombre-excel">${escapeHtml(data.nombre_excel)}</span>
-                            <button class="btn btn-secondary btn-small" data-action="use-excel-name" title="Usar nombre del Excel">Usar este</button>
-                        `;
-                        nameRow.querySelector('[data-action="use-excel-name"]').addEventListener('click', () => {
-                            div.querySelector('[data-role="preview"]').textContent = currentNombreExcel;
-                        });
-                        matchBlock.appendChild(nameRow);
-                    }
-                } else if (matchEl) {
-                    // Update hint message based on new excel_dni_found
-                    if (data.excel_dni_found === true) {
-                        matchEl.className = 'match-percentage match-hint';
-                        matchEl.innerHTML = 'DNI encontrado &mdash; sin columna &ldquo;nombre excel&rdquo; en el archivo';
-                    } else if (data.excel_dni_found === false) {
-                        matchEl.className = 'match-percentage match-hint';
-                        matchEl.innerHTML = 'DNI no encontrado en el Excel';
-                    }
+                        </div>
+                        <button class="btn btn-outline btn-small" data-action="use-excel-name" title="Reemplazar con nombre del Excel">Aplicar</button>
+                    `;
+                    nameRow.querySelector('[data-action="use-excel-name"]').addEventListener('click', () => {
+                        previewEl.textContent = currentNombreExcel;
+                        setPreviewUserEdited(true);
+                    });
+                    if (actions) previewBlock.insertBefore(nameRow, actions);
                 }
+                applyExcelStatus(div, excelMatchInfo(true, data.match_percentage, data.nombre_excel));
+            } else {
+                const info = excelMatchInfo(data.excel_dni_found, null, null);
+                if (info) applyExcelStatus(div, info);
             }
             updatePreview();
         };
@@ -878,6 +942,8 @@ function displayResults(resultsData, sessionId) {
                 if (!img) return;
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                // Draw highlight boxes first, then labels on top
                 highlights.forEach(h => {
                     const isActive = selectedField === h.field;
                     ctx.fillStyle = h.color + (isActive ? '60' : '25');
@@ -886,13 +952,42 @@ function displayResults(resultsData, sessionId) {
                     ctx.lineWidth = isActive ? 2.5 : 1.5;
                     ctx.strokeRect(h.x, h.y, h.w, h.h);
                 });
+
+                // Draw field name tags above each highlight box
+                const tagFontSize = Math.max(10, Math.round(canvas.width * 0.018));
+                const tagPad = Math.round(tagFontSize * 0.35);
+                ctx.font = `600 ${tagFontSize}px system-ui, sans-serif`;
+                highlights.forEach(h => {
+                    const isActive = selectedField === h.field;
+                    const label = FIELD_LABELS[h.field] || h.field;
+                    const tw = ctx.measureText(label).width;
+                    const tagW = tw + tagPad * 2;
+                    const tagH = tagFontSize + tagPad * 2;
+                    const tagX = h.x;
+                    const tagY = h.y - tagH - 2;
+                    const clampedY = Math.max(0, tagY);
+
+                    // Tag background pill
+                    ctx.fillStyle = h.color + (isActive ? 'ff' : 'cc');
+                    ctx.beginPath();
+                    ctx.roundRect(tagX, clampedY, tagW, tagH, tagH / 2);
+                    ctx.fill();
+
+                    // Tag text
+                    ctx.fillStyle = '#fff';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(label, tagX + tagPad, clampedY + tagH / 2);
+                });
             };
 
             const redrawAllHighlights = (selectedField) => {
                 if (!previewPages) return;
-                pagesWrap.querySelectorAll('canvas').forEach((canvas, i) => {
-                    if (previewPages[i]) {
-                        drawPageHighlights(canvas, previewPages[i].highlights, selectedField);
+                pagesWrap.querySelectorAll('canvas').forEach((canvas) => {
+                    const wrap = canvas.closest('.preview-canvas-wrap');
+                    const pageNum = parseInt(wrap?.dataset.pageNum || '1');
+                    const pg = previewPages[pageNum - 1];
+                    if (pg) {
+                        drawPageHighlights(canvas, pg.highlights, selectedField);
                     }
                 });
             };
@@ -962,27 +1057,37 @@ function displayResults(resultsData, sessionId) {
                 img.onload = () => {
                     canvas._previewImg = img;
                     drawPageHighlights(canvas, pg.highlights, activeField);
+                    // Auto-zoom + scroll to the extracted fields region
+                    if (pg.highlights && pg.highlights.length > 0) {
+                        requestAnimationFrame(() => {
+                            const padding = 40;
+                            const rawMinY = Math.min(...pg.highlights.map(h => h.y)) - padding;
+                            const rawMaxY = Math.max(...pg.highlights.map(h => h.y + h.h)) + padding;
+                            const regionH = rawMaxY - rawMinY;
+                            const cw = scrollContainer.clientWidth || 400;
+                            const ch = scrollContainer.clientHeight || 400;
+                            // Zoom so the highlights region fills ~75% of container height, cap at 2.0
+                            const baseScale = cw / canvas.width;
+                            const targetZoom = (ch * 0.75) / (regionH * baseScale);
+                            zoomLevel = Math.max(1.0, Math.min(2.0, targetZoom));
+                            applyZoom();
+                            // Center the fields region in the scroll container.
+                            // applyZoom sets pagesWrap width = zoomLevel * 100% of scrollContainer,
+                            // so the canvas renders at cw * zoomLevel pixels wide — compute scale
+                            // directly without relying on a post-reflow offsetWidth read.
+                            requestAnimationFrame(() => {
+                                const scale = (cw * zoomLevel) / canvas.width;
+                                const regionCenterY = ((rawMinY + rawMaxY) / 2) * scale;
+                                scrollContainer.scrollTop = Math.max(0, regionCenterY - ch / 2);
+                            });
+                        });
+                    }
                 };
                 img.src = pg.image;
 
                 if (!previewPages) previewPages = [];
                 previewPages[pg.page - 1] = pg;
                 loadedPages.add(pg.page - 1);
-            };
-
-            const loadPage = (pageIdx) => {
-                if (loadedPages.has(pageIdx)) return;
-                loadedPages.add(pageIdx); // mark as loading
-                const sid = resultsContent.dataset.sessionId;
-                const idx = result.file_index;
-                fetch(`/api/preview/${sid}/${idx}?page=${pageIdx}`)
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.success && data.page) {
-                            addPageToWrap(data.page);
-                        }
-                    })
-                    .catch(() => {});
             };
 
             const loadPreview = () => {
@@ -1021,11 +1126,33 @@ function displayResults(resultsData, sessionId) {
                 loadPreview();
             }
 
-            // Wire focus/blur on field inputs and selects
+            // Apply field color variables to rows and wire hover + focus/blur
+            div.querySelectorAll('[data-field-row]').forEach(row => {
+                const field = row.dataset.fieldRow;
+                const color = FIELD_COLORS[field];
+                if (color) row.style.setProperty('--field-color', color);
+                row.addEventListener('mouseenter', () => {
+                    row.classList.add('field-hovered');
+                    redrawAllHighlights(field);
+                });
+                row.addEventListener('mouseleave', () => {
+                    row.classList.remove('field-hovered');
+                    redrawAllHighlights(activeField);
+                });
+            });
             div.querySelectorAll('[data-field-input], [data-field-select]').forEach(el => {
                 const field = el.getAttribute('data-field-input') || el.getAttribute('data-field-select');
-                el.addEventListener('focus', () => { activeField = field; redrawAllHighlights(field); });
-                el.addEventListener('blur', () => { activeField = null; redrawAllHighlights(null); });
+                el.addEventListener('focus', () => {
+                    activeField = field;
+                    div.querySelectorAll('[data-field-row]').forEach(r => r.classList.remove('field-hovered'));
+                    div.querySelector(`[data-field-row="${field}"]`)?.classList.add('field-hovered');
+                    redrawAllHighlights(field);
+                });
+                el.addEventListener('blur', () => {
+                    activeField = null;
+                    div.querySelector(`[data-field-row="${field}"]`)?.classList.remove('field-hovered');
+                    redrawAllHighlights(null);
+                });
             });
 
             // Legend click -> highlight that field
@@ -1134,9 +1261,10 @@ function renderFieldRow(label, field, options, defaultValue, { required }) {
         : `<option value="">(no encontrado)</option>`;
 
     return `
-        <div class="field-row">
+        <div class="field-row" data-field-row="${field}">
             <div class="field-label">
                 <div class="field-title">
+                    <span class="field-color-dot"></span>
                     <span>${escapeHtml(label)}</span>
                     ${required ? `<span class="pill pill-required">requerido</span>` : `<span class="pill pill-optional">opcional</span>`}
                 </div>

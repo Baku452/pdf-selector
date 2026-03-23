@@ -23,4 +23,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5001"))
     threading.Timer(1.0, _open_browser, args=(port,)).start()
     app.run(debug=False, host="127.0.0.1", port=port)
-

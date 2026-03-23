@@ -11,23 +11,24 @@ import zipfile
 import io
 import uuid
 import json
+import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # CI smoke test: verify critical imports work inside the bundled exe
-if '--test-imports' in sys.argv:
+if "--test-imports" in sys.argv:
     errors = []
-    for mod in ['flask', 'openpyxl', 'et_xmlfile', 'fitz', 'PIL']:
+    for mod in ["flask", "openpyxl", "et_xmlfile", "fitz", "PIL"]:
         try:
             __import__(mod)
-            print(f'[OK] {mod}')
+            print(f"[OK] {mod}")
         except ImportError as e:
-            print(f'[FAIL] {mod}: {e}')
+            print(f"[FAIL] {mod}: {e}")
             errors.append(mod)
     sys.exit(1 if errors else 0)
 
-from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
-from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, render_template, send_file
 from pdf_processor import PDFProcessor
 
 # PyInstaller compatibility: templates/static relative to bundle/extracted dir
@@ -35,7 +36,9 @@ BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(os.path.abspath(__file__)).parent)
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 # Use /tmp for uploads on Vercel (read-only filesystem), local dir otherwise
-UPLOAD_DIR = Path("/tmp/pdfns_uploads") if os.environ.get("VERCEL") else BASE_DIR / "uploads"
+UPLOAD_DIR = (
+    Path("/tmp/pdfns_uploads") if os.environ.get("VERCEL") else BASE_DIR / "uploads"
+)
 
 app = Flask(
     __name__,
@@ -43,46 +46,95 @@ app = Flask(
     static_folder=str(STATIC_DIR),
     static_url_path="/static",
 )
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB per request (batched uploads)
-app.config['UPLOAD_FOLDER'] = str(UPLOAD_DIR)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config["MAX_CONTENT_LENGTH"] = (
+    100 * 1024 * 1024
+)  # 100MB per request (batched uploads)
+app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
+app.config["SECRET_KEY"] = "your-secret-key-here"
 
 # Ensure upload folder exists
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
-    return jsonify({'error': 'Archivo(s) demasiado grandes para un solo envío. Intenta con menos archivos a la vez.'}), 413
+    return (
+        jsonify(
+            {
+                "error": "Archivo(s) demasiado grandes para un solo envío. "
+                "Intenta con menos archivos a la vez."
+            }
+        ),
+        413,
+    )
+
 
 # Allowed extensions
-ALLOWED_EXTENSIONS = {'pdf'}
+ALLOWED_EXTENSIONS = {"pdf"}
 
 # In-memory store for Excel lookup dicts keyed by session_id
-_excel_lookups = {}
+_excel_lookups: dict = {}
 # In-memory store for Excel file paths so users can reconfigure column mapping
-_excel_paths = {}
+_excel_paths: dict = {}
+# Timestamps for TTL-based eviction
+_excel_times: dict = {}
+
+_EXCEL_TTL = 3 * 3600  # evict Excel sessions after 3 hours
+_SESSION_TTL = 3 * 3600  # remove upload dirs after 3 hours
+
+
+def _evict_expired_excel_sessions():
+    now = time.time()
+    expired = [k for k, t in list(_excel_times.items()) if now - t > _EXCEL_TTL]
+    for k in expired:
+        _excel_lookups.pop(k, None)
+        _excel_paths.pop(k, None)
+        _excel_times.pop(k, None)
+
+
+def _cleanup_old_session_dirs():
+    upload_root = Path(app.config["UPLOAD_FOLDER"])
+    if not upload_root.is_dir():
+        return
+    now = time.time()
+    for entry in upload_root.iterdir():
+        if entry.is_dir():
+            try:
+                if now - entry.stat().st_mtime > _SESSION_TTL:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except Exception:
+                pass
+
+
+def _background_cleanup():
+    while True:
+        time.sleep(3600)  # run hourly
+        try:
+            _evict_expired_excel_sessions()
+            _cleanup_old_session_dirs()
+        except Exception:
+            pass
 
 
 def allowed_file(filename):
-    return (
-        '.' in filename and
-        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-    )
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 processor = PDFProcessor()
 
+_cleanup_thread = threading.Thread(target=_background_cleanup, daemon=True)
+_cleanup_thread.start()
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """Render the main page"""
-    return render_template('index.html')
+    return render_template("index.html")
 
 
 def _session_dir(session_id):
     """Directory where this session's PDFs are stored."""
-    path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -92,37 +144,41 @@ def _safe_download_filename(name):
     if not name or not name.strip():
         return "documento.pdf"
     name = name.strip()
-    if not name.lower().endswith('.pdf'):
-        name = name + '.pdf'
-    return ''.join(c for c in name if c.isalnum() or c in ' ._-()').strip() or 'documento.pdf'
+    if not name.lower().endswith(".pdf"):
+        name = name + ".pdf"
+    return (
+        "".join(c for c in name if c.isalnum() or c in " ._-()").strip()
+        or "documento.pdf"
+    )
 
 
-@app.route('/api/upload-excel', methods=['POST'])
+@app.route("/api/upload-excel", methods=["POST"])
 def upload_excel():
     """Handle Excel reference file upload. Returns session id and entry count."""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
 
-    file = request.files['file']
+    file = request.files["file"]
     if not file or not file.filename:
-        return jsonify({'error': 'No file selected'}), 400
+        return jsonify({"error": "No file selected"}), 400
 
-    if not file.filename.lower().endswith('.xlsx'):
-        return jsonify({'error': 'Solo se aceptan archivos .xlsx'}), 400
+    if not file.filename.lower().endswith(".xlsx"):
+        return jsonify({"error": "Solo se aceptan archivos .xlsx"}), 400
 
     excel_session = str(uuid.uuid4())
     session_path = _session_dir(excel_session)
-    excel_path = session_path / 'reference.xlsx'
+    excel_path = session_path / "reference.xlsx"
     file.save(str(excel_path))
 
     excel_path_str = str(excel_path)
     _excel_paths[excel_session] = excel_path_str
+    _excel_times[excel_session] = time.time()
 
     try:
         # Always read sheet/column metadata first so the config panel can show
         excel_info = processor.get_excel_info(excel_path_str)
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({"error": str(e)}), 400
 
     # Try a default load; if it fails, still return success so the user
     # can pick the right sheet/columns via the config panel
@@ -134,121 +190,138 @@ def upload_excel():
         _excel_lookups[excel_session] = {}
         load_error = str(e)
 
-    return jsonify({
-        'success': True,
-        'excel_session': excel_session,
-        'entries': len(_excel_lookups[excel_session]),
-        'filename': file.filename,
-        'sheets': list(excel_info.keys()),
-        'columns': excel_info,
-        'load_error': load_error,
-    })
+    return jsonify(
+        {
+            "success": True,
+            "excel_session": excel_session,
+            "entries": len(_excel_lookups[excel_session]),
+            "filename": file.filename,
+            "sheets": list(excel_info.keys()),
+            "columns": excel_info,
+            "load_error": load_error,
+        }
+    )
 
 
-@app.route('/api/configure-excel/<excel_session>', methods=['POST'])
+@app.route("/api/configure-excel/<excel_session>", methods=["POST"])
 def configure_excel(excel_session):
     """Re-load the Excel reference with a user-specified sheet/column mapping."""
     excel_path = _excel_paths.get(excel_session)
     if not excel_path:
-        return jsonify({'error': 'Excel session not found'}), 404
+        return jsonify({"error": "Excel session not found"}), 404
 
     data = request.get_json() or {}
     try:
         lookup = processor.load_excel_reference(
             excel_path,
-            sheet_name=data.get('sheet') or None,
-            dni_col=data.get('dni_col') or None,
-            hudbay_col=data.get('hudbay_col') or None,
-            standard_col=data.get('standard_col') or None,
+            sheet_name=data.get("sheet") or None,
+            dni_col=data.get("dni_col") or None,
+            hudbay_col=data.get("hudbay_col") or None,
+            standard_col=data.get("standard_col") or None,
         )
         _excel_lookups[excel_session] = lookup
-        return jsonify({'success': True, 'entries': len(lookup)})
+        return jsonify({"success": True, "entries": len(lookup)})
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({"error": str(e)}), 400
 
 
-@app.route('/api/upload', methods=['POST'])
+@app.route("/api/upload", methods=["POST"])
 def upload_pdf():
     """Handle PDF upload and return suggested names. Keeps files for download."""
-    if 'files' not in request.files:
-        return jsonify({'error': 'No files provided'}), 400
+    if "files" not in request.files:
+        return jsonify({"error": "No files provided"}), 400
 
-    files = request.files.getlist('files')
+    files = request.files.getlist("files")
 
-    if not files or files[0].filename == '':
-        return jsonify({'error': 'No files selected'}), 400
+    if not files or files[0].filename == "":
+        return jsonify({"error": "No files selected"}), 400
 
     # Check for Excel reference session
-    excel_session = request.form.get('excel_session', '').strip()
+    excel_session = request.form.get("excel_session", "").strip()
     excel_lookup = _excel_lookups.get(excel_session) if excel_session else None
 
     # Support appending to an existing session (for batched uploads)
-    session_id = request.form.get('session_id', '').strip() or str(uuid.uuid4())
+    session_id = request.form.get("session_id", "").strip() or str(uuid.uuid4())
     session_path = _session_dir(session_id)
-    file_index_start = int(request.form.get('file_index_start', '0'))
-    results = []
-    file_index = file_index_start
+    file_index_start = int(request.form.get("file_index_start", "0"))
 
+    # Phase 1: save files sequentially (stream read must stay on main thread)
+    tasks = []  # (file_index, original_name, filepath | None, error | None)
+    file_index = file_index_start
     for file in files:
         if not allowed_file(file.filename):
-            results.append({
-                'original_name': file.filename,
-                'success': False,
-                'error': 'Invalid file type. Only PDF files are allowed.',
-                'file_index': None,
-            })
+            tasks.append(
+                (
+                    None,
+                    file.filename,
+                    None,
+                    "Invalid file type. Only PDF files are allowed.",
+                )
+            )
             continue
-
+        filepath = session_path / f"{file_index}.pdf"
         try:
-            # Save under session folder as 0.pdf, 1.pdf, ...
-            stem = str(file_index)
-            filepath = session_path / f"{stem}.pdf"
             file.save(str(filepath))
+            tasks.append((file_index, file.filename, filepath, None))
+            file_index += 1
+        except Exception as e:
+            tasks.append((None, file.filename, None, str(e)))
 
+    # Phase 2: analyze files in parallel
+    def _analyze_task(task):
+        idx, orig_name, filepath, err = task
+        if err:
+            return {
+                "original_name": orig_name,
+                "success": False,
+                "error": err,
+                "file_index": None,
+            }
+        try:
             analysis = processor.analyze(
                 str(filepath),
-                original_filename=file.filename,
-                verbose=True,  # Enable verbose for debugging
+                original_filename=orig_name,
+                verbose=False,
                 excel_lookup=excel_lookup,
             )
-
             result = {
                 "success": bool(analysis.get("success")),
-                "original_name": file.filename,
+                "original_name": orig_name,
                 "suggested_name": analysis.get("suggested_name"),
                 "candidates": analysis.get("candidates", {}),
                 "defaults": analysis.get("defaults", {}),
                 "notes": analysis.get("notes", []),
                 "text_chars": analysis.get("text_chars", 0),
-                "file_index": file_index,
+                "file_index": idx,
                 "detected_format": analysis.get("detected_format"),
                 "nombre_excel": analysis.get("nombre_excel"),
                 "match_percentage": analysis.get("match_percentage"),
                 "excel_dni_found": analysis.get("excel_dni_found"),
             }
-            results.append(result)
-
             # Cache defaults for fast preview generation
-            cache_path = session_path / f"{file_index}.defaults.json"
             try:
-                cache_path.write_text(json.dumps(analysis.get("defaults", {})))
+                (session_path / f"{idx}.defaults.json").write_text(
+                    json.dumps(analysis.get("defaults", {}))
+                )
             except Exception:
                 pass
-
-            file_index += 1
-
+            return result
         except Exception as e:
-            results.append({
-                'original_name': file.filename,
-                'success': False,
-                'error': str(e),
-                'file_index': None,
-            })
+            return {
+                "original_name": orig_name,
+                "success": False,
+                "error": str(e),
+                "file_index": None,
+            }
 
-    return jsonify({'session_id': session_id, 'results': results})
+    max_workers = min(len(tasks), 4) or 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_analyze_task, tasks))
+
+    return jsonify({"session_id": session_id, "results": results})
 
 
-@app.route('/api/reanalyze/<session_id>/<int:file_index>', methods=['POST'])
+@app.route("/api/reanalyze/<session_id>/<int:file_index>", methods=["POST"])
 def reanalyze_pdf(session_id, file_index):
     """Re-analyze a PDF with a forced format (hudbay or standard).
 
@@ -256,22 +329,22 @@ def reanalyze_pdf(session_id, file_index):
     is re-extracted from the correct page.
     """
     data = request.get_json() or {}
-    forced_format = data.get('format', 'standard')
-    if forced_format not in ('hudbay', 'standard'):
-        return jsonify({'error': 'Invalid format'}), 400
+    forced_format = data.get("format", "standard")
+    if forced_format not in ("hudbay", "standard"):
+        return jsonify({"error": "Invalid format"}), 400
 
-    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
     pdf_path = session_path / f"{file_index}.pdf"
     if not pdf_path.is_file():
-        return jsonify({'error': 'File not found'}), 404
+        return jsonify({"error": "File not found"}), 404
 
     # Check for Excel reference session
-    excel_session = data.get('excel_session', '').strip()
+    excel_session = data.get("excel_session", "").strip()
     excel_lookup = _excel_lookups.get(excel_session) if excel_session else None
 
     analysis = processor.analyze(
         str(pdf_path),
-        verbose=True,
+        verbose=False,
         excel_lookup=excel_lookup,
         forced_format=forced_format,
     )
@@ -283,19 +356,21 @@ def reanalyze_pdf(session_id, file_index):
     except Exception:
         pass
 
-    return jsonify({
-        "success": bool(analysis.get("success")),
-        "candidates": analysis.get("candidates", {}),
-        "defaults": analysis.get("defaults", {}),
-        "notes": analysis.get("notes", []),
-        "detected_format": analysis.get("detected_format"),
-        "nombre_excel": analysis.get("nombre_excel"),
-        "match_percentage": analysis.get("match_percentage"),
-        "excel_dni_found": analysis.get("excel_dni_found"),
-    })
+    return jsonify(
+        {
+            "success": bool(analysis.get("success")),
+            "candidates": analysis.get("candidates", {}),
+            "defaults": analysis.get("defaults", {}),
+            "notes": analysis.get("notes", []),
+            "detected_format": analysis.get("detected_format"),
+            "nombre_excel": analysis.get("nombre_excel"),
+            "match_percentage": analysis.get("match_percentage"),
+            "excel_dni_found": analysis.get("excel_dni_found"),
+        }
+    )
 
 
-@app.route('/api/preview/<session_id>/<int:file_index>')
+@app.route("/api/preview/<session_id>/<int:file_index>")
 def preview_pdf(session_id, file_index):
     """Return rendered page(s) with highlight bounding boxes.
 
@@ -303,12 +378,12 @@ def preview_pdf(session_id, file_index):
       page (int, default 0) — 0-based page index to render (single page mode)
     Returns first page quickly; frontend requests additional pages on demand.
     """
-    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
     pdf_path = session_path / f"{file_index}.pdf"
     if not pdf_path.is_file():
-        return jsonify({'success': False, 'error': 'File not found'}), 404
+        return jsonify({"success": False, "error": "File not found"}), 404
 
-    req_page = request.args.get('page', None)
+    req_page = request.args.get("page", None)
 
     # Load cached defaults (saved during upload) to avoid re-analyzing
     cache_path = session_path / f"{file_index}.defaults.json"
@@ -320,40 +395,48 @@ def preview_pdf(session_id, file_index):
     else:
         # Fallback: re-analyze (slow)
         analysis = processor.analyze(str(pdf_path), verbose=False)
-        defaults = analysis.get('defaults', {})
+        defaults = analysis.get("defaults", {})
 
     if req_page is not None:
         # Single-page mode: render just one page
         page_num = int(req_page)
-        result = processor.generate_preview_single_page(str(pdf_path), defaults, page_num)
+        result = processor.generate_preview_single_page(
+            str(pdf_path), defaults, page_num
+        )
         if result is None:
-            return jsonify({'success': False, 'error': 'Could not generate preview'}), 500
-        return jsonify({'success': True, **result})
+            return (
+                jsonify({"success": False, "error": "Could not generate preview"}),
+                500,
+            )
+        return jsonify({"success": True, **result})
     else:
         # First request: return page 1 + total page count
         result = processor.generate_preview_single_page(str(pdf_path), defaults, 0)
         if result is None:
-            return jsonify({'success': False, 'error': 'Could not generate preview'}), 500
-        return jsonify({'success': True, **result})
+            return (
+                jsonify({"success": False, "error": "Could not generate preview"}),
+                500,
+            )
+        return jsonify({"success": True, **result})
 
 
-@app.route('/api/download/<session_id>/<int:file_index>')
+@app.route("/api/download/<session_id>/<int:file_index>")
 def download_file(session_id, file_index):
     """Download one PDF with the chosen filename (Content-Disposition)."""
-    filename = request.args.get('filename', '').strip()
+    filename = request.args.get("filename", "").strip()
     filename = _safe_download_filename(filename)
 
-    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
     path = session_path / f"{file_index}.pdf"
     if not path.is_file():
-        return jsonify({'error': 'File not found or expired'}), 404
+        return jsonify({"error": "File not found or expired"}), 404
 
     try:
         return send_file(
             path,
             as_attachment=True,
             download_name=filename,
-            mimetype='application/pdf',
+            mimetype="application/pdf",
         )
     finally:
         try:
@@ -362,26 +445,26 @@ def download_file(session_id, file_index):
             pass
 
 
-@app.route('/api/download-zip', methods=['POST'])
+@app.route("/api/download-zip", methods=["POST"])
 def download_zip():
     """Download a ZIP with all PDFs renamed. Body: { session_id, files: [ { index, filename } ] }"""
     data = request.get_json()
     if not data:
-        return jsonify({'error': 'JSON body required'}), 400
-    session_id = data.get('session_id')
-    files = data.get('files')
+        return jsonify({"error": "JSON body required"}), 400
+    session_id = data.get("session_id")
+    files = data.get("files")
     if not session_id or not isinstance(files, list):
-        return jsonify({'error': 'session_id and files (array) required'}), 400
+        return jsonify({"error": "session_id and files (array) required"}), 400
 
-    session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+    session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
     if not session_path.is_dir():
-        return jsonify({'error': 'Session not found or expired'}), 404
+        return jsonify({"error": "Session not found or expired"}), 404
 
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for item in files:
-            idx = item.get('index')
-            name = _safe_download_filename(item.get('filename', ''))
+            idx = item.get("index")
+            name = _safe_download_filename(item.get("filename", ""))
             if idx is None:
                 continue
             path = session_path / f"{idx}.pdf"
@@ -397,14 +480,14 @@ def download_zip():
     return send_file(
         buf,
         as_attachment=True,
-        download_name='CAMBIO_NOMBRE_descargas.zip',
-        mimetype='application/zip',
+        download_name="CAMBIO_NOMBRE_descargas.zip",
+        mimetype="application/zip",
     )
 
 
 def start_server(port):
     """Start Flask in a background thread (used by desktop mode)."""
-    app.run(debug=False, host='127.0.0.1', port=port, use_reloader=False)
+    app.run(debug=False, host="127.0.0.1", port=port, use_reloader=False)
 
 
 class Api:
@@ -414,31 +497,31 @@ class Api:
         """Open native Save As dialog and copy the PDF with the new name."""
         import webview
 
-        session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+        session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
         source = session_path / f"{file_index}.pdf"
         if not source.is_file():
-            return {'error': 'Archivo no encontrado o sesion expirada'}
+            return {"error": "Archivo no encontrado o sesion expirada"}
 
         safe_name = _safe_download_filename(filename)
         windows = webview.windows
         if not windows:
-            return {'error': 'No hay ventana disponible'}
+            return {"error": "No hay ventana disponible"}
 
         result = windows[0].create_file_dialog(
             webview.SAVE_DIALOG,
             save_filename=safe_name,
-            file_types=('PDF Files (*.pdf)',),
+            file_types=("PDF Files (*.pdf)",),
         )
 
         if not result:
-            return {'cancelled': True}
+            return {"cancelled": True}
 
         dest = result if isinstance(result, str) else result[0]
         try:
             shutil.copy2(str(source), dest)
-            return {'ok': True, 'path': dest}
+            return {"ok": True, "path": dest}
         except Exception as e:
-            return {'error': str(e)}
+            return {"error": str(e)}
 
     def save_zip(self, session_id, files_json):
         """Open native Save As dialog and save a ZIP with renamed PDFs."""
@@ -446,52 +529,53 @@ class Api:
         import json
 
         files = json.loads(files_json) if isinstance(files_json, str) else files_json
-        session_path = Path(app.config['UPLOAD_FOLDER']) / str(session_id)
+        session_path = Path(app.config["UPLOAD_FOLDER"]) / str(session_id)
         if not session_path.is_dir():
-            return {'error': 'Sesion no encontrada o expirada'}
+            return {"error": "Sesion no encontrada o expirada"}
 
         windows = webview.windows
         if not windows:
-            return {'error': 'No hay ventana disponible'}
+            return {"error": "No hay ventana disponible"}
 
         result = windows[0].create_file_dialog(
             webview.SAVE_DIALOG,
-            save_filename='CAMBIO_NOMBRE_descargas.zip',
-            file_types=('ZIP Files (*.zip)',),
+            save_filename="CAMBIO_NOMBRE_descargas.zip",
+            file_types=("ZIP Files (*.zip)",),
         )
 
         if not result:
-            return {'cancelled': True}
+            return {"cancelled": True}
 
         dest = result if isinstance(result, str) else result[0]
         try:
-            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
                 for item in files:
-                    idx = item.get('index')
-                    name = _safe_download_filename(item.get('filename', ''))
+                    idx = item.get("index")
+                    name = _safe_download_filename(item.get("filename", ""))
                     if idx is None:
                         continue
                     path = session_path / f"{idx}.pdf"
                     if path.is_file():
                         zf.write(path, name)
-            return {'ok': True, 'path': dest}
+            return {"ok": True, "path": dest}
         except Exception as e:
-            return {'error': str(e)}
+            return {"error": str(e)}
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5001))
-    is_bundled = getattr(sys, 'frozen', False)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5001))
+    is_bundled = getattr(sys, "frozen", False)
 
     if is_bundled:
         # Desktop mode: open native window with pywebview
         import webview
+
         api = Api()
         t = threading.Thread(target=start_server, args=(port,), daemon=True)
         t.start()
         webview.create_window(
-            'PDF_Renombrar_Archivos',
-            f'http://localhost:{port}',
+            "PDF_Renombrar_Archivos",
+            f"http://localhost:{port}",
             width=1100,
             height=750,
             min_size=(800, 500),
@@ -502,4 +586,4 @@ if __name__ == '__main__':
         # Dev mode: normal Flask server
         print(f"\nServidor iniciado en http://localhost:{port}")
         print("   Presiona Ctrl+C para detener el servidor\n")
-        app.run(debug=True, host='127.0.0.1', port=port)
+        app.run(debug=True, host="127.0.0.1", port=port)

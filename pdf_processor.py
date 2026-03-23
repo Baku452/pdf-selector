@@ -56,12 +56,8 @@ if _BUNDLE_DIR:
 
     _poppler_dir = os.path.join(_BUNDLE_DIR, "poppler")
     if os.path.isdir(_poppler_dir):
-        _POPPLER_PATH = (
-            _poppler_dir  # Store for explicit use in convert_from_path
-        )
-        os.environ["PATH"] = (
-            _poppler_dir + os.pathsep + os.environ.get("PATH", "")
-        )
+        _POPPLER_PATH = _poppler_dir  # Store for explicit use in convert_from_path
+        os.environ["PATH"] = _poppler_dir + os.pathsep + os.environ.get("PATH", "")
         print(f"[DEBUG] Poppler configured at: {_poppler_dir}")
     else:
         print(f"[WARNING] Poppler directory not found at: {_poppler_dir}")
@@ -78,9 +74,7 @@ else:
             _TESSERACT_AVAILABLE = True
 
         # Auto-detect Poppler
-        _poppler_candidates = glob.glob(
-            r"C:\poppler\poppler-*\Library\bin"
-        ) + [
+        _poppler_candidates = glob.glob(r"C:\poppler\poppler-*\Library\bin") + [
             r"C:\poppler\Library\bin",
             r"C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin",
         ]
@@ -95,6 +89,92 @@ else:
 class PDFProcessor:
     """Core PDF processing functionality shared between CLI and web app"""
 
+    # ------------------------------------------------------------------ #
+    # Pre-compiled regex constants (avoid repeated compilation per call)  #
+    # ------------------------------------------------------------------ #
+    _RE_SPACES = re.compile(r"\s+")
+    _RE_NORM_DATE_STRIP = re.compile(r"[^\d./-]")
+    _RE_NORM_DATE_MULTI_DASH = re.compile(r"-{2,}")
+
+    _RE_DATE_LABELED = [
+        re.compile(
+            r"(?:FECHA\s+DE\s+EVALUACI[OÓ]N|FECHA\s+DE\s+EXAMEN(?:\s+INICIAL)?|"
+            r"F\.\s*DE\s+EXAMEN|FECHA\s+EXAMEN|FECHA\s+DE\s+ATENCI[OÓ]N|"
+            r"FECHA\s+DE\s+APTITUD)\s*[:\-]?\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:APELLIDOS|NOMBRES|NOMBRE).{0,80}"
+            r"FECHA\s*[:\-]\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?<!\w)FECHA\s*[:\-]\s*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})",
+            re.IGNORECASE,
+        ),
+    ]
+    _RE_DATE_ANY = [
+        re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"),
+        re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}"),
+        re.compile(r"\d{4}[/-]\d{1,2}[/-]\d{1,2}"),
+    ]
+
+    # Matches "DNI: 12345678" and "DNI O CARNET DE EXTRANJERIA 241953936"
+    # Also handles OCR variants: "DNI © CARNET" (© misread as O)
+    # Supports 8-digit DNI and 9-12 digit carnet de extranjería
+    _RE_DNI_LABELED = re.compile(
+        r"\bDNI(?:\s+[O©0o]\s+CARNET\s+DE\s+EXTRANJERIA)?\s*[:\-]?\s*(\d{8,12})\b",
+        re.IGNORECASE,
+    )
+    _RE_DNI_8 = re.compile(r"\b(\d{8})\b")
+    _RE_DNI_9PLUS = re.compile(r"\b(\d{9,12})\b")
+
+    _EXAM_RE_STR = (
+        r"PRE[- ]?OCUPACIONAL|POST[- ]?OCUPACIONAL|PERI[OÓ]DICO"
+        r"|ANUAL|INGRESO|EGRESO|RETIRO"
+    )
+    _RE_EXAM_CHECKBOX = [
+        re.compile(r"(" + _EXAM_RE_STR + r")\s*\|?\s*[xX✓✗☒]\b", re.IGNORECASE),
+        re.compile(r"[|]?\s*[xX✓✗☒]\s*\|?\s*(" + _EXAM_RE_STR + r")", re.IGNORECASE),
+    ]
+    _RE_EXAM_LABELED_LINE = re.compile(
+        r"TIPO\s+DE\s+(?:EXAMEN|EVALUACI[OÓ]N)\s*[:\-]\s*(" + _EXAM_RE_STR + r")",
+        re.IGNORECASE,
+    )
+    _RE_EXAM_CONTEXTUAL = re.compile(
+        r"EXAMEN\s+M[EÉ]DICO\s+(" + _EXAM_RE_STR + r")",
+        re.IGNORECASE,
+    )
+
+    _RE_PERSON_LABELED = re.compile(
+        r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|"
+        r"APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO)[.\s]*[:\-]?\s*"
+        r"([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{5,80})",
+        re.IGNORECASE,
+    )
+    _RE_PERSON_3WORDS = re.compile(
+        r"\b([A-ZÁÉÍÓÚÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚÑ]{2,25}){2,4})\b"
+    )
+
+    _RE_COMPANY_LABELED = re.compile(
+        r"(?:EMPRESA|RAZON\s+SOCIAL|RAZÓN\s+SOCIAL|CONTRATISTA|CLIENTE|"
+        r"COMPAÑIA|COMPAÑÍA|COMPANIA|COMPANY)(?:\s*[/]\s*\w+)*\s*[:\-|]?\s*"
+        r"([A-ZÁÉÍÓÚÑ0-9a-záéíóúñ&\s.]{3,120})",
+        re.IGNORECASE,
+    )
+    _RE_COMPANY_OCR_AMP1 = re.compile(r"(\w)\s*á\s+(\w)")
+    _RE_COMPANY_OCR_AMP2 = re.compile(r"&\$")
+    _RE_COMPANY_OCR_AMP3 = re.compile(r"\s*&\s*")
+
+    _RE_HUDBAY = [
+        re.compile(r"H\s*U\s*D\s*B\s*A\s*Y"),
+        re.compile(r"FOR-SS[O0]-\d{3}"),
+        re.compile(r"FORMATOS\s+PARA\s+LA\s+VALORACI[OÓ]N\s+DE\s+LA\s+APTITUD"),
+        re.compile(r"AUTORIZADO\s+POR\s+HUDBAY"),
+    ]
+
+    _RE_FILENAME_ILLEGAL = re.compile(r'[<>:"/\\|?*]')
+
     @staticmethod
     def _dedupe_keep_order(values):
         seen = set()
@@ -108,26 +188,24 @@ class PDFProcessor:
             out.append(v)
         return out
 
-    @staticmethod
-    def _clean_spaces(s: str) -> str:
-        return re.sub(r"\s+", " ", (s or "").strip())
+    @classmethod
+    def _clean_spaces(cls, s: str) -> str:
+        return cls._RE_SPACES.sub(" ", (s or "").strip())
 
-    @staticmethod
-    def _normalize_date(s: str) -> str:
+    @classmethod
+    def _normalize_date(cls, s: str) -> str:
         """
         Normaliza fechas a un formato consistente usando '-' como separador.
         Ejemplos: 31.12.25 -> 31-12-25 ; 31/12/2025 -> 31-12-2025
         """
         if not s:
             return ""
-        cleaned = re.sub(r"[^\d./-]", "", s.strip())
+        cleaned = cls._RE_NORM_DATE_STRIP.sub("", s.strip())
         cleaned = cleaned.replace(".", "-").replace("/", "-")
-        cleaned = re.sub(r"-{2,}", "-", cleaned)
+        cleaned = cls._RE_NORM_DATE_MULTI_DASH.sub("-", cleaned)
         return cleaned.strip("-")
 
-    def extract_text_from_pdf(
-        self, pdf_path, use_ocr=True, verbose=False, pages=None
-    ):
+    def extract_text_from_pdf(self, pdf_path, use_ocr=True, verbose=False, pages=None):
         """Extrae texto de PDF (digital o escaneado).
 
         Args:
@@ -161,11 +239,7 @@ class PDFProcessor:
                     print(f"  [WARN] Error extrayendo texto digital: {e}")
 
         # Si no hay texto o es muy poco, usa OCR
-        if (
-            use_ocr
-            and pytesseract is not None
-            and convert_from_path is not None
-        ):
+        if use_ocr and pytesseract is not None and convert_from_path is not None:
             if verbose:
                 print(f"  [OCR] Aplicando OCR (documento escaneado)...")
             try:
@@ -175,23 +249,21 @@ class PDFProcessor:
                     for page_num in pages:
                         page_images = convert_from_path(
                             pdf_path,
-                            first_page=page_num
-                            + 1,  # pdf2image uses 1-indexed
+                            first_page=page_num + 1,  # pdf2image uses 1-indexed
                             last_page=page_num + 1,
+                            dpi=300,
                             poppler_path=_POPPLER_PATH,
                         )
                         images.extend(page_images)
                     if verbose:
-                        print(
-                            f"  [INFO] OCR de paginas: {[p+1 for p in pages]}"
-                        )
+                        print(f"  [INFO] OCR de paginas: {[p+1 for p in pages]}")
                 else:
-                    # First, try to convert PDF to images (requires Poppler)
                     images = convert_from_path(
                         pdf_path,
                         first_page=1,
                         last_page=3,
-                        poppler_path=_POPPLER_PATH,  # Pass poppler path explicitly
+                        dpi=300,
+                        poppler_path=_POPPLER_PATH,
                     )  # Solo primeras 3 páginas (fallback)
                 if verbose:
                     print(f"  [OK] PDF convertido a {len(images)} imagenes")
@@ -205,9 +277,11 @@ class PDFProcessor:
                         ocr_lang = "eng"
                 except Exception:
                     pass
+                # --psm 6: assume uniform block of text (best for form documents)
+                ocr_config = "--psm 6"
                 for i, image in enumerate(images):
                     ocr_text = pytesseract.image_to_string(
-                        image, lang=ocr_lang
+                        image, lang=ocr_lang, config=ocr_config
                     )
                     text += ocr_text
                     if verbose:
@@ -230,7 +304,10 @@ class PDFProcessor:
             r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",  # 31/12/2024 o 31-12-2024
             r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",  # 2024/12/31
             r"\d{1,2}\.\d{1,2}\.\d{2,4}",  # 31.12.2025 o 31.12.25
-            r"\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}",
+            r"\d{1,2}\s+(?:de\s+)?"
+            r"(?:enero|febrero|marzo|abril|mayo|junio|julio|"
+            r"agosto|septiembre|octubre|noviembre|diciembre)"
+            r"\s+(?:de\s+)?\d{4}",
         ]
 
         dates = []
@@ -266,8 +343,10 @@ class PDFProcessor:
 
         # Patrones para nombres de personas (apellidos y nombres)
         person_patterns = [
-            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|NOMBRE|NAME)[:\s]+([A-ZÁÉÍÓÚÑ\s]{10,60})",
-            r"([A-ZÁÉÍÓÚÑ]{2,20}\s+[A-ZÁÉÍÓÚÑ]{2,20}\s+[A-ZÁÉÍÓÚÑ]{2,20})",  # 3 palabras en mayúsculas
+            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|NOMBRE|NAME)"
+            r"[:\s]+([A-ZÁÉÍÓÚÑ\s]{10,60})",
+            # 3 palabras en mayúsculas
+            r"([A-ZÁÉÍÓÚÑ]{2,20}\s+[A-ZÁÉÍÓÚÑ]{2,20}\s+[A-ZÁÉÍÓÚÑ]{2,20})",
         ]
 
         # Busca nombres de personas primero
@@ -323,11 +402,7 @@ class PDFProcessor:
 
         for doc_type, keywords in doc_types.items():
             if any(keyword in text_lower for keyword in keywords):
-                return (
-                    doc_type.upper()
-                    if doc_type == "emoa"
-                    else doc_type.capitalize()
-                )
+                return doc_type.upper() if doc_type == "emoa" else doc_type.capitalize()
 
         return None
 
@@ -356,48 +431,46 @@ class PDFProcessor:
         if not text:
             return []
 
-        date_re = r"(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})"
-
         # 1. Try labeled dates first (highest priority)
-        labeled_patterns = [
-            r"(?:FECHA\s+DE\s+EVALUACI[OÓ]N|FECHA\s+DE\s+EXAMEN(?:\s+INICIAL)?|F\.\s*DE\s+EXAMEN|FECHA\s+EXAMEN|FECHA\s+DE\s+ATENCI[OÓ]N|FECHA\s+DE\s+APTITUD)\s*[:\-]?\s*"
-            + date_re,
-            # "FECHA:" near patient context (after NOMBRES/APELLIDOS line, not doc header)
-            r"(?:APELLIDOS|NOMBRES|NOMBRE).{0,80}FECHA\s*[:\-]\s*" + date_re,
-            # Standalone "FECHA:" label (lower priority, may match doc header date)
-            r"(?<!\w)FECHA\s*[:\-]\s*" + date_re,
-        ]
         labeled_dates = []
-        for pat in labeled_patterns:
-            for m in re.finditer(pat, text, flags=re.IGNORECASE):
+        for pat in self._RE_DATE_LABELED:
+            for m in pat.finditer(text):
                 labeled_dates.append(self._normalize_date(m.group(1)))
 
         # 2. All dates as fallback
-        all_date_patterns = [
-            r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}",
-            r"\d{1,2}\.\d{1,2}\.\d{2,4}",
-            r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
-        ]
         all_dates = []
-        for pattern in all_date_patterns:
-            all_dates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+        for pat in self._RE_DATE_ANY:
+            all_dates.extend(pat.findall(text))
 
         # Labeled dates first, then all others
         combined = labeled_dates + [self._normalize_date(d) for d in all_dates]
         return self._dedupe_keep_order(combined)
 
     def extract_dni_candidates(self, text: str):
-        """Devuelve lista de posibles DNI (8 dígitos) encontrados en el texto."""
+        """Devuelve lista de posibles DNI/carnet encontrados en el texto.
+
+        Handles:
+        - 8-digit Peruvian DNI:  "DNI: 76248882"
+        - 9-12 digit carnet:     "DNI O CARNET DE EXTRANJERIA 241953936"
+
+        When OCR produces a 9-digit number in a labeled DNI field, also adds
+        the 8-digit variant (first digit stripped) as a candidate, since OCR
+        sometimes prepends a stray character to the actual 8-digit DNI.
+        """
         if not text:
             return []
         found = []
-        found.extend(
-            re.findall(
-                r"\bDNI\s*[:\-]?\s*(\d{8})\b", text, flags=re.IGNORECASE
-            )
-        )
-        # Fallback: cualquier bloque de 8 dígitos (filtrado mínimo)
-        found.extend(re.findall(r"\b(\d{8})\b", text))
+        # Labeled first (highest confidence — includes carnet de extranjería)
+        for match in self._RE_DNI_LABELED.findall(text):
+            found.append(match)
+            # If 9 digits, also offer the 8-digit variant (OCR artifact guard)
+            if len(match) == 9:
+                found.append(match[1:])
+        # Fallback: bare 8-digit blocks
+        found.extend(self._RE_DNI_8.findall(text))
+        # Fallback: bare 9-12 digit blocks only if nothing found yet
+        if not found:
+            found.extend(self._RE_DNI_9PLUS.findall(text))
         return self._dedupe_keep_order(found)
 
     # Map checkbox/form labels to canonical exam types
@@ -429,45 +502,24 @@ class PDFProcessor:
             return []
 
         prioritized = []
-        _EXAM_RE = r"PRE[- ]?OCUPACIONAL|POST[- ]?OCUPACIONAL|PERI[OÓ]DICO|ANUAL|INGRESO|EGRESO|RETIRO"
 
         # 1. Checkbox-style: "Anual x" or "x Periodico" (x marks the checked option)
         #    Highest priority because it indicates what's actually selected.
-        checkbox_patterns = [
-            # "label x" or "label X" (checked after label)
-            r"(" + _EXAM_RE + r")\s*\|?\s*[xX✓✗☒]\b",
-            # "|x label" or "x| label" (checked before label)
-            r"[|]?\s*[xX✓✗☒]\s*\|?\s*(" + _EXAM_RE + r")",
-        ]
-        for pat in checkbox_patterns:
-            for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                canonical = self._EXAM_LABEL_MAP.get(
-                    m.group(1).upper().strip()
-                )
+        for pat in self._RE_EXAM_CHECKBOX:
+            for m in pat.finditer(text):
+                canonical = self._EXAM_LABEL_MAP.get(m.group(1).upper().strip())
                 if canonical:
                     prioritized.append(canonical)
 
         # 2. Labeled on same line: "TIPO DE EXAMEN: PREOCUPACIONAL"
         for line in text.split("\n"):
-            labeled = re.findall(
-                r"TIPO\s+DE\s+(?:EXAMEN|EVALUACI[OÓ]N)\s*[:\-]\s*("
-                + _EXAM_RE
-                + r")",
-                line,
-                flags=re.IGNORECASE,
-            )
-            for match in labeled:
+            for match in self._RE_EXAM_LABELED_LINE.findall(line):
                 canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
                 if canonical:
                     prioritized.append(canonical)
 
         # 3. Contextual: "EXAMEN MÉDICO PERIODICO"
-        contextual = re.findall(
-            r"EXAMEN\s+M[EÉ]DICO\s+(" + _EXAM_RE + r")",
-            text,
-            flags=re.IGNORECASE,
-        )
-        for match in contextual:
+        for match in self._RE_EXAM_CONTEXTUAL.findall(text):
             canonical = self._EXAM_LABEL_MAP.get(match.upper().strip())
             if canonical:
                 prioritized.append(canonical)
@@ -573,20 +625,14 @@ class PDFProcessor:
             return []
         candidates = []
 
-        labeled_patterns = [
-            r"(?:APELLIDOS?\s+Y\s+NOMBRES?|NOMBRES?\s+Y\s+APELLIDOS?|APELLIDOS\s+Y\s+NOMBRE|NOMBRE\s+COMPLETO)[.\s]*[:\-]?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{5,80})",
-        ]
-        for pat in labeled_patterns:
-            for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                raw = m.group(1).split("\n", 1)[0].strip()
-                cleaned = self._clean_person_name(raw)
-                if len(cleaned.split()) >= 2:
-                    candidates.append(cleaned)
+        for m in self._RE_PERSON_LABELED.finditer(text):
+            raw = m.group(1).split("\n", 1)[0].strip()
+            cleaned = self._clean_person_name(raw)
+            if len(cleaned.split()) >= 2:
+                candidates.append(cleaned)
 
         # Heurística: 3 palabras mayúsculas consecutivas (típico en reportes)
-        for m in re.finditer(
-            r"\b([A-ZÁÉÍÓÚÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚÑ]{2,25}){2,4})\b", text
-        ):
+        for m in self._RE_PERSON_3WORDS.finditer(text):
             raw = self._clean_spaces(m.group(1))
             # evita empresas u otros
             if any(
@@ -614,9 +660,9 @@ class PDFProcessor:
         """Clean company name: keep legal suffixes, limit to 5 words, filter OCR noise."""
         raw = self._clean_spaces(raw)
         # Fix common OCR misreads of '&': "Má" -> "M&", "&$" -> "&", collapse spaces around &
-        raw = re.sub(r"(\w)\s*á\s+(\w)", r"\1&\2", raw)  # "Má S" -> "M&S"
-        raw = re.sub(r"&[\$]", "&", raw)  # "&$" -> "&"
-        raw = re.sub(r"\s*&\s*", "&", raw)  # collapse spaces around &
+        raw = self._RE_COMPANY_OCR_AMP1.sub(r"\1&\2", raw)  # "Má S" -> "M&S"
+        raw = self._RE_COMPANY_OCR_AMP2.sub("&", raw)  # "&$" -> "&"
+        raw = self._RE_COMPANY_OCR_AMP3.sub("&", raw)  # collapse spaces around &
         raw = self._clean_spaces(raw)
         # Reject if mostly lowercase (OCR garbage like "contiene informacién...")
         words = raw.split()
@@ -633,24 +679,19 @@ class PDFProcessor:
             return []
         candidates = []
 
-        labeled_patterns = [
-            # Handle separators like "EMPRESA / CONTRATA | SINAR PERU"
-            r"(?:EMPRESA|RAZON\s+SOCIAL|RAZÓN\s+SOCIAL|CONTRATISTA|CLIENTE|COMPAÑIA|COMPAÑÍA|COMPANIA|COMPANY)(?:\s*[/]\s*\w+)*\s*[:\-|]?\s*([A-ZÁÉÍÓÚÑ0-9a-záéíóúñ&\s.]{3,120})",
-        ]
-        for pat in labeled_patterns:
-            for m in re.finditer(pat, text, flags=re.IGNORECASE):
-                raw = m.group(1).split("\n", 1)[0].strip()
-                cleaned = self._clean_company_name(raw)
-                if len(cleaned) >= 3:
-                    candidates.append(cleaned)
+        for m in self._RE_COMPANY_LABELED.finditer(text):
+            raw = m.group(1).split("\n", 1)[0].strip()
+            cleaned = self._clean_company_name(raw)
+            if len(cleaned) >= 3:
+                candidates.append(cleaned)
 
         # Heurística: líneas con CONSORCIO
         for line in text.split("\n")[:80]:
-            l = self._clean_spaces(line)
-            if not l:
+            ln = self._clean_spaces(line)
+            if not ln:
                 continue
-            if "CONSORCIO" in l.upper():
-                cleaned = self._clean_company_name(l)
+            if "CONSORCIO" in ln.upper():
+                cleaned = self._clean_company_name(ln)
                 if cleaned:
                     candidates.append(cleaned)
 
@@ -697,7 +738,8 @@ class PDFProcessor:
                         31.01.26 EMPO 76248882 HUAMAN POCCO JESUS YOVANI-G4S PERU SAC.pdf
 
         fmt="standard": DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-FECHA.pdf
-                        45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26.pdf
+                        45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI
+                        MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26.pdf
         """
         include = include or {}
 
@@ -730,7 +772,7 @@ class PDFProcessor:
             if use("fecha", fecha) and fecha:
                 parts.append(self._date_to_short(fecha))
             new_name = "-".join([p for p in parts if p])
-            new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
+            new_name = self._RE_FILENAME_ILLEGAL.sub("", new_name)
             return new_name + ".pdf" if new_name else ""
 
         # Hudbay (default): FECHA TIPO DNI NOMBRE-EMPRESA.pdf
@@ -756,11 +798,11 @@ class PDFProcessor:
             parts.append(name_empresa)
 
         new_name = " ".join([p for p in parts if p])
-        new_name = re.sub(r'[<>:"/\\|?*]', "", new_name)
+        new_name = self._RE_FILENAME_ILLEGAL.sub("", new_name)
         return new_name + ".pdf" if new_name else ""
 
-    @staticmethod
-    def detect_format_from_content(text):
+    @classmethod
+    def detect_format_from_content(cls, text):
         """Detect if PDF content is a Hudbay document based on OCR text patterns.
 
         Looks for Hudbay logo OCR variants, document IDs, and explicit mentions.
@@ -769,16 +811,8 @@ class PDFProcessor:
         if not text:
             return None
         upper = text.upper()
-        # Hudbay logo OCRs as variations: "H D BAY", "H DB AY", "H UDB AY", "HUDBAY"
-        # Also look for Hudbay document IDs and explicit mentions
-        hudbay_patterns = [
-            r"H\s*U\s*D\s*B\s*A\s*Y",  # HUDBAY with optional spaces (OCR variants)
-            r"FOR-SS[O0]-\d{3}",  # Hudbay document ID (FOR-SSO-293)
-            r"FORMATOS\s+PARA\s+LA\s+VALORACI[OÓ]N\s+DE\s+LA\s+APTITUD",  # Hudbay form title
-            r"AUTORIZADO\s+POR\s+HUDBAY",  # "Autorizado por Hudbay"
-        ]
-        for pat in hudbay_patterns:
-            if re.search(pat, upper):
+        for pat in cls._RE_HUDBAY:
+            if pat.search(upper):
                 return "hudbay"
         return None
 
@@ -819,7 +853,9 @@ class PDFProcessor:
         info = {}
         for name in wb.sheetnames:
             ws = wb[name]
-            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+            header_row = next(
+                ws.iter_rows(min_row=1, max_row=1, values_only=True), None
+            )
             info[name] = [str(h).strip() if h else "" for h in (header_row or [])]
         wb.close()
         return info
@@ -841,7 +877,8 @@ class PDFProcessor:
             hudbay_col:   exact column header for the Hudbay reference filename
             standard_col: exact column header for the standard reference filename
 
-        Returns dict {dni_string: {"paciente": str|None, "hudbay_name": str|None, "standard_name": str|None}}.
+        Returns dict {dni_string: {"paciente": str|None,
+        "hudbay_name": str|None, "standard_name": str|None}}.
         """
         if load_workbook is None:
             raise ImportError(
@@ -875,10 +912,18 @@ class PDFProcessor:
                         return i
             return None
 
-        doc_idx      = _find_col(dni_col,      "documento", "dni")
-        pac_idx      = _find_col(None,          "paciente", "nombre", "name")
-        hudbay_idx   = _find_col(hudbay_col,   "emo hudbay", "hudbay", "nombre excel", "nombre_excel")
-        standard_idx = _find_col(standard_col, "emo bambas", "bambas", "nombre excel", "nombre_excel")
+        doc_idx = _find_col(dni_col, "documento", "dni")
+        pac_idx = _find_col(None, "paciente", "nombre", "name")
+        hudbay_idx = _find_col(
+            hudbay_col, "emo hudbay", "hudbay", "nombre excel", "nombre_excel"
+        )
+        standard_idx = _find_col(
+            standard_col,
+            "emo bambas",
+            "bambas",
+            "nombre excel",
+            "nombre_excel",
+        )
 
         if doc_idx is None:
             wb.close()
@@ -902,8 +947,8 @@ class PDFProcessor:
             if not doc_val:
                 continue
             lookup[doc_val] = {
-                "paciente":      _cell(row, pac_idx),
-                "hudbay_name":   _cell(row, hudbay_idx),
+                "paciente": _cell(row, pac_idx),
+                "hudbay_name": _cell(row, hudbay_idx),
                 "standard_name": _cell(row, standard_idx),
             }
 
@@ -940,6 +985,30 @@ class PDFProcessor:
 
         return extracted_name
 
+    @staticmethod
+    def _find_excel_by_name(extracted_name, excel_lookup, threshold=0.72):
+        """Fallback: search all Excel entries by paciente name similarity.
+
+        Returns (entry, ratio) for the best match above threshold, or (None, 0).
+        Used when DNI is missing or not found in the Excel file.
+        """
+        if not extracted_name or not excel_lookup:
+            return None, 0
+        name_upper = extracted_name.upper()
+        best_entry = None
+        best_ratio = 0.0
+        for entry in excel_lookup.values():
+            pac = (entry.get("paciente") or "").upper()
+            if not pac:
+                continue
+            ratio = difflib.SequenceMatcher(None, name_upper, pac).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_entry = entry
+        if best_ratio >= threshold:
+            return best_entry, best_ratio
+        return None, 0.0
+
     def analyze(
         self,
         pdf_path,
@@ -954,9 +1023,7 @@ class PDFProcessor:
         """
         if verbose:
             ocr_status = (
-                "disponible"
-                if (pytesseract and convert_from_path)
-                else "NO disponible"
+                "disponible" if (pytesseract and convert_from_path) else "NO disponible"
             )
             print(f"  [INFO] OCR {ocr_status}")
 
@@ -979,22 +1046,26 @@ class PDFProcessor:
                 print(f"  [INFO] Formato Estandar -> extrayendo solo pagina 2")
         else:
             # Unknown filename: read page 1 first to detect format from content
-            page1_text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[0])
+            page1_text = self.extract_text_from_pdf(
+                pdf_path, verbose=verbose, pages=[0]
+            )
             content_fmt = self.detect_format_from_content(page1_text)
             if content_fmt == "hudbay":
                 detected_fmt = "hudbay"
                 text = page1_text
                 if verbose:
-                    print(f"  [INFO] Formato Hudbay detectado por contenido -> usando pagina 1")
+                    print(
+                        f"  [INFO] Formato Hudbay detectado por contenido -> usando pagina 1"
+                    )
             else:
                 detected_fmt = "standard"
                 text = self.extract_text_from_pdf(pdf_path, verbose=verbose, pages=[1])
                 if verbose:
-                    print(f"  [INFO] Formato Estandar (por defecto) -> extrayendo solo pagina 2")
+                    print(
+                        f"  [INFO] Formato Estandar (por defecto) -> extrayendo solo pagina 2"
+                    )
         filename_data = (
-            self.extract_from_filename(original_filename)
-            if original_filename
-            else {}
+            self.extract_from_filename(original_filename) if original_filename else {}
         )
 
         # candidatos desde texto
@@ -1036,29 +1107,59 @@ class PDFProcessor:
         nombre_excel = None
         excel_dni_found = None  # None = Excel not loaded; True/False when loaded
         if excel_lookup:
+            excel_entry = None
+            matched_by_name = False
+
+            # Primary match: by DNI
             if candidates["dni"]:
                 first_dni = candidates["dni"][0]
                 excel_entry = excel_lookup.get(first_dni)
                 excel_dni_found = excel_entry is not None
-                if excel_entry:
-                    pac_name = excel_entry.get("paciente") or ""
-                    if pac_name:
-                        pac_clean = self._clean_spaces(pac_name)
-                        # Always prepend the Excel paciente name as the top candidate
-                        candidates["nombre"] = self._dedupe_keep_order(
-                            [pac_clean] + candidates["nombre"]
-                        )
-                        if verbose:
-                            print(f"  [EXCEL] Nombre encontrado en Excel: '{pac_clean}' (DNI: {first_dni})")
-                    # Pick format-specific reference name
-                    if detected_fmt == "hudbay":
-                        nombre_excel = excel_entry.get("hudbay_name") or excel_entry.get("standard_name")
-                    else:
-                        nombre_excel = excel_entry.get("standard_name") or excel_entry.get("hudbay_name")
-                    if nombre_excel and verbose:
-                        print(f"  [EXCEL] Nombre excel de referencia ({detected_fmt}): '{nombre_excel}'")
             else:
-                excel_dni_found = False  # Excel loaded but no DNI extracted from PDF
+                excel_dni_found = False
+
+            # Fallback: by name similarity when DNI produced no entry
+            if not excel_entry and candidates["nombre"]:
+                fallback_entry, fallback_ratio = self._find_excel_by_name(
+                    candidates["nombre"][0], excel_lookup
+                )
+                if fallback_entry:
+                    excel_entry = fallback_entry
+                    excel_dni_found = True
+                    matched_by_name = True
+                    if verbose:
+                        print(
+                            f"  [EXCEL] Coincidencia por nombre"
+                            f" ({round(fallback_ratio * 100)}%): "
+                            f"'{candidates['nombre'][0]}'"
+                        )
+
+            if excel_entry:
+                pac_name = excel_entry.get("paciente") or ""
+                if pac_name:
+                    pac_clean = self._clean_spaces(pac_name)
+                    # Always prepend the Excel paciente name as the top candidate
+                    candidates["nombre"] = self._dedupe_keep_order(
+                        [pac_clean] + candidates["nombre"]
+                    )
+                    if verbose:
+                        src = (
+                            "nombre"
+                            if matched_by_name
+                            else f"DNI: {candidates['dni'][0]}"
+                        )
+                        print(f"  [EXCEL] Nombre Excel: '{pac_clean}' ({src})")
+                # Pick format-specific reference name
+                if detected_fmt == "hudbay":
+                    nombre_excel = excel_entry.get("hudbay_name") or excel_entry.get(
+                        "standard_name"
+                    )
+                else:
+                    nombre_excel = excel_entry.get("standard_name") or excel_entry.get(
+                        "hudbay_name"
+                    )
+                if nombre_excel and verbose:
+                    print(f"  [EXCEL] Referencia ({detected_fmt}): '{nombre_excel}'")
 
         if verbose:
             print(f"\n[DEBUG] Candidatos encontrados:")
@@ -1142,9 +1243,7 @@ class PDFProcessor:
         - Unknown:  generic heuristic extraction
         """
         parts = {}
-        name_without_ext = (
-            filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
-        )
+        name_without_ext = filename.rsplit(".pdf", 1)[0].rsplit(".PDF", 1)[0].strip()
         if not name_without_ext:
             return parts
 
@@ -1176,9 +1275,7 @@ class PDFProcessor:
 
         idx = 0
         # 1. Date (DD.MM.YY)
-        if idx < len(tokens) and re.match(
-            r"\d{1,2}\.\d{1,2}\.\d{2,4}$", tokens[idx]
-        ):
+        if idx < len(tokens) and re.match(r"\d{1,2}\.\d{1,2}\.\d{2,4}$", tokens[idx]):
             parts["date"] = tokens[idx]
             idx += 1
 
@@ -1208,7 +1305,8 @@ class PDFProcessor:
 
     def _parse_standard_filename(self, name):
         """Parse Standard format: 'DNI-NOMBRE-EMPRESA-TIPO-CMESPINAR-DD.MM.YY'
-        Example: '45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26'
+        Example: '45205399-INFANTE CHUQUIRUNA JULIO CESAR-KOMATSU MITSUI
+        MAQUINARIAS PERU S.A.-EMPO-CMESPINAR-02.02.26'
         """
         parts = {}
 
@@ -1233,10 +1331,7 @@ class PDFProcessor:
             idx_end -= 1
 
         # CMESPINAR
-        if (
-            idx_end >= idx_start
-            and segments[idx_end].strip().upper() == "CMESPINAR"
-        ):
+        if idx_end >= idx_start and segments[idx_end].strip().upper() == "CMESPINAR":
             idx_end -= 1
 
         # Exam type (abbreviation or full)
@@ -1268,9 +1363,7 @@ class PDFProcessor:
         parts = {}
 
         # Extrae fecha (DD.MM.YY o DD-MM-YY)
-        date_match = re.search(
-            r"(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})", name_without_ext
-        )
+        date_match = re.search(r"(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})", name_without_ext)
         if date_match:
             parts["date"] = date_match.group(1)
 
@@ -1319,9 +1412,7 @@ class PDFProcessor:
                     if w.upper() not in ["MECANICA", "REVESTIMIENTO", "Y"]
                 ]
                 company_words = (
-                    important_words[:4]
-                    if important_words
-                    else company_words[:3]
+                    important_words[:4] if important_words else company_words[:3]
                 )
             else:
                 company_words = company_words[:4]
@@ -1342,7 +1433,7 @@ class PDFProcessor:
     MAX_PREVIEW_PAGES = 1  # Only load the single page used for extraction
 
     def generate_preview_single_page(
-        self, pdf_path, defaults, page_num=0, max_width=500
+        self, pdf_path, defaults, page_num=0, max_width=900
     ):
         """Render a single PDF page as JPEG and find bounding boxes for field values.
 
@@ -1352,18 +1443,12 @@ class PDFProcessor:
         if not defaults:
             defaults = {}
 
-        result = self._preview_digital_single(
-            pdf_path, defaults, page_num, max_width
-        )
+        result = self._preview_digital_single(pdf_path, defaults, page_num, max_width)
         if result is None:
-            result = self._preview_ocr_single(
-                pdf_path, defaults, page_num, max_width
-            )
+            result = self._preview_ocr_single(pdf_path, defaults, page_num, max_width)
         return result
 
-    def generate_preview_with_highlights(
-        self, pdf_path, defaults, max_width=500
-    ):
+    def generate_preview_with_highlights(self, pdf_path, defaults, max_width=500):
         """Render PDF pages as images and find bounding boxes for field values.
 
         Returns dict with 'pages' list plus 'total_pages' count.
@@ -1390,8 +1475,8 @@ class PDFProcessor:
                 return None
 
             page = doc[page_num]
-            # For page 0, check if it's a digital PDF
-            if page_num == 0 and len(page.get_text().strip()) < 50:
+            # Fall back to OCR if the page has no extractable text (scanned)
+            if len(page.get_text().strip()) < 50:
                 doc.close()
                 return None
 
@@ -1400,11 +1485,9 @@ class PDFProcessor:
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            pil_img = Image.frombytes(
-                "RGB", (pix.width, pix.height), pix.samples
-            )
+            pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             buf = io.BytesIO()
-            pil_img.save(buf, format="JPEG", quality=75)
+            pil_img.save(buf, format="JPEG", quality=85)
             img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
             highlights = self._find_highlights_digital(page, defaults, zoom)
@@ -1433,6 +1516,7 @@ class PDFProcessor:
                 pdf_path,
                 first_page=page_num + 1,
                 last_page=page_num + 1,
+                dpi=200,
                 poppler_path=_POPPLER_PATH,
             )
             if not images:
@@ -1458,7 +1542,7 @@ class PDFProcessor:
             scale_y = img_height / orig_h
 
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=75)
+            img.save(buf, format="JPEG", quality=85)
             img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
             # OCR language detection
@@ -1471,11 +1555,12 @@ class PDFProcessor:
                 pass
 
             ocr_data = pytesseract.image_to_data(
-                orig_img, lang=ocr_lang, output_type=pytesseract.Output.DICT
+                orig_img,
+                lang=ocr_lang,
+                output_type=pytesseract.Output.DICT,
+                config="--psm 6",
             )
-            highlights = self._find_highlights_ocr(
-                ocr_data, defaults, scale_x, scale_y
-            )
+            highlights = self._find_highlights_ocr(ocr_data, defaults, scale_x, scale_y)
 
             return {
                 "page": {
@@ -1523,106 +1608,113 @@ class PDFProcessor:
         return highlights
 
     def _find_highlights_ocr(self, ocr_data, defaults, scale_x, scale_y):
-        """Find bounding boxes for field values in OCR data."""
+        """Find tight bounding boxes for field values in OCR data.
+
+        Uses exact word-sequence matching so highlights cover only the value
+        text, not the surrounding label or whitespace.
+        """
         highlights = []
         words = ocr_data.get("text", [])
         lefts = ocr_data.get("left", [])
         tops = ocr_data.get("top", [])
         widths = ocr_data.get("width", [])
         heights = ocr_data.get("height", [])
-        n = len(words)
+
+        # Compact index: only non-empty word positions
+        word_idx = [i for i in range(len(words)) if (words[i] or "").strip()]
+        nw = len(word_idx)
+
+        def _box(seq):
+            x0 = min(lefts[q] for q in seq)
+            y0 = min(tops[q] for q in seq)
+            x1 = max(lefts[q] + widths[q] for q in seq)
+            y1 = max(tops[q] + heights[q] for q in seq)
+            return (x0, y0, x1, y1) if (x1 - x0) > 2 and (y1 - y0) > 2 else None
 
         for field, value in defaults.items():
             if not value or field not in self._FIELD_COLORS:
                 continue
-            value_str = str(value).upper()
-            value_norm = self._normalize_for_search(value_str)
-            # Also try matching individual words for multi-word values
-            value_words = value_str.split()
-            found = False
+            value_str = str(value).strip().upper()
+            value_wds = value_str.split()
+            if not value_wds:
+                continue
+            vw = len(value_wds)
+            value_norms = [self._normalize_for_search(w) for w in value_wds]
 
-            for i in range(n):
-                if found:
+            found_box = None
+
+            # Strategy 1: exact consecutive word-sequence match (tight box)
+            for start in range(nw - vw + 1):
+                seq = word_idx[start : start + vw]
+                if all(
+                    self._normalize_for_search((words[seq[k]] or "").strip().upper())
+                    == value_norms[k]
+                    for k in range(vw)
+                ):
+                    found_box = _box(seq)
                     break
-                w_i = (words[i] or "").strip()
-                if not w_i:
-                    continue
 
-                # Try concatenating words i..j to match the full value
-                concat = ""
-                matched_indices = []
-                for j in range(i, min(i + 12, n)):
-                    w_j = (words[j] or "").strip()
-                    if not w_j:
-                        continue
-                    concat = (concat + " " + w_j).strip() if concat else w_j
-                    matched_indices.append(j)
-                    concat_upper = concat.upper()
-                    concat_norm = self._normalize_for_search(concat_upper)
-                    if value_str in concat_upper or value_norm in concat_norm:
-                        # Compute bounding box from matched word indices only
-                        x0 = min(lefts[k] for k in matched_indices)
-                        y0 = min(tops[k] for k in matched_indices)
-                        x1 = max(lefts[k] + widths[k] for k in matched_indices)
-                        y1 = max(tops[k] + heights[k] for k in matched_indices)
-                        w = x1 - x0
-                        h = y1 - y0
-                        # Only add if dimensions are valid
-                        if w > 2 and h > 2:
-                            highlights.append(
-                                {
-                                    "field": field,
-                                    "color": self._FIELD_COLORS[field],
-                                    "x": x0 * scale_x,
-                                    "y": y0 * scale_y,
-                                    "w": w * scale_x,
-                                    "h": h * scale_y,
-                                }
-                            )
-                        found = True
+            # Strategy 2: value as substring of a word window — trim to value words
+            if not found_box:
+                val_norm = self._normalize_for_search(value_str)
+                for start in range(nw):
+                    concat = ""
+                    seq = []
+                    for k in range(start, min(start + vw + 8, nw)):
+                        wk = (words[word_idx[k]] or "").strip()
+                        if not wk:
+                            continue
+                        concat = (concat + " " + wk).strip() if concat else wk
+                        seq.append(word_idx[k])
+                        cu = concat.upper()
+                        cn = self._normalize_for_search(cu)
+                        if value_str in cu or val_norm in cn:
+                            # Find where in concat the value starts
+                            pos = cu.find(value_str)
+                            if pos < 0:
+                                pos = cn.find(val_norm)
+                            # Skip prefix words up to pos
+                            trim_start, chars = 0, 0
+                            for t, wi in enumerate(seq):
+                                if chars >= pos:
+                                    trim_start = t
+                                    break
+                                chars += len((words[wi] or "").strip()) + 1
+                            # Include only enough words to cover the value
+                            trim_end, chars = len(seq), 0
+                            for t, wi in enumerate(seq[trim_start:]):
+                                chars += len((words[wi] or "").strip()) + 1
+                                if chars >= len(value_str):
+                                    trim_end = trim_start + t + 1
+                                    break
+                            trimmed = seq[trim_start:trim_end]
+                            if trimmed:
+                                found_box = _box(trimmed)
+                            break
+
+            # Strategy 3: first word only (last resort for multi-word values)
+            if not found_box and vw >= 2:
+                fw_norm = value_norms[0]
+                for wi in word_idx:
+                    if (
+                        self._normalize_for_search((words[wi] or "").strip().upper())
+                        == fw_norm
+                    ):
+                        found_box = _box([wi])
                         break
 
-            # Fallback: if full value not found, try matching the first word
-            if not found and len(value_words) >= 2:
-                first_word = value_words[0]
-                first_norm = self._normalize_for_search(first_word)
-                for i in range(n):
-                    w_i = (words[i] or "").strip().upper()
-                    if not w_i:
-                        continue
-                    w_i_norm = self._normalize_for_search(w_i)
-                    if w_i == first_word or w_i_norm == first_norm:
-                        # Found start word — span from here for len(value_words) words
-                        matched_indices = []
-                        for j in range(i, min(i + len(value_words) + 3, n)):
-                            w_j = (words[j] or "").strip()
-                            if w_j:
-                                matched_indices.append(j)
-                            if len(matched_indices) >= len(value_words):
-                                break
-                        if matched_indices:
-                            x0 = min(lefts[k] for k in matched_indices)
-                            y0 = min(tops[k] for k in matched_indices)
-                            x1 = max(
-                                lefts[k] + widths[k] for k in matched_indices
-                            )
-                            y1 = max(
-                                tops[k] + heights[k] for k in matched_indices
-                            )
-                            w = x1 - x0
-                            h = y1 - y0
-                            if w > 2 and h > 2:
-                                highlights.append(
-                                    {
-                                        "field": field,
-                                        "color": self._FIELD_COLORS[field],
-                                        "x": x0 * scale_x,
-                                        "y": y0 * scale_y,
-                                        "w": w * scale_x,
-                                        "h": h * scale_y,
-                                    }
-                                )
-                        break
+            if found_box:
+                x0, y0, x1, y1 = found_box
+                highlights.append(
+                    {
+                        "field": field,
+                        "color": self._FIELD_COLORS[field],
+                        "x": x0 * scale_x,
+                        "y": y0 * scale_y,
+                        "w": (x1 - x0) * scale_x,
+                        "h": (y1 - y0) * scale_y,
+                    }
+                )
 
         return highlights
 
@@ -1660,9 +1752,7 @@ class PDFProcessor:
                 mat = fitz.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat, alpha=False)
                 # Convert to JPEG for smaller payload
-                pil_img = Image.frombytes(
-                    "RGB", (pix.width, pix.height), pix.samples
-                )
+                pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 buf = io.BytesIO()
                 pil_img.save(buf, format="JPEG", quality=75)
                 img_bytes = buf.getvalue()
@@ -1773,17 +1863,10 @@ class PDFProcessor:
                             w = (words[j] or "").strip()
                             if not w:
                                 continue
-                            concat = (
-                                (concat + " " + w).strip() if concat else w
-                            )
+                            concat = (concat + " " + w).strip() if concat else w
                             concat_upper = concat.upper()
-                            concat_norm = self._normalize_for_search(
-                                concat_upper
-                            )
-                            if (
-                                value_str in concat_upper
-                                or value_norm in concat_norm
-                            ):
+                            concat_norm = self._normalize_for_search(concat_upper)
+                            if value_str in concat_upper or value_norm in concat_norm:
                                 x0 = ocr_data["left"][i]
                                 y0 = ocr_data["top"][i]
                                 x1 = ocr_data["left"][j] + ocr_data["width"][j]
@@ -1819,9 +1902,7 @@ class PDFProcessor:
         except Exception:
             return None
 
-    def generate_filename_parts(
-        self, pdf_path, verbose=False, original_filename=None
-    ):
+    def generate_filename_parts(self, pdf_path, verbose=False, original_filename=None):
         """Extrae información y genera partes del nombre de archivo"""
         # Extrae texto del PDF
         text = self.extract_text_from_pdf(pdf_path, verbose=verbose)
@@ -1850,25 +1931,19 @@ class PDFProcessor:
                 else:
                     # Sin DNI no podemos generar nombre
                     if verbose:
-                        print(
-                            "  [WARN] DNI no encontrado en nombre del archivo"
-                        )
+                        print("  [WARN] DNI no encontrado en nombre del archivo")
                     return None, None
 
                 # 2. NOMBRE
                 if filename_data.get("person_name"):
-                    name_clean = "_".join(
-                        filename_data["person_name"].split()[:4]
-                    )
+                    name_clean = "_".join(filename_data["person_name"].split()[:4])
                     name_clean = re.sub(r'[<>:"/\\|?*&]', "", name_clean)
                     parts.append(name_clean)
                     metadata["nombre"] = filename_data["person_name"]
 
                 # 3. EMPRESA
                 if filename_data.get("company"):
-                    company_clean = "_".join(
-                        filename_data["company"].split()[:4]
-                    )
+                    company_clean = "_".join(filename_data["company"].split()[:4])
                     company_clean = re.sub(r'[<>:"/\\|?*&]', "", company_clean)
                     parts.append(company_clean)
                     metadata["empresa"] = filename_data["company"]
@@ -1885,9 +1960,7 @@ class PDFProcessor:
                 # 6. FECHA DE EVALUACION
                 if filename_data.get("date"):
                     date_clean = (
-                        filename_data["date"]
-                        .replace(".", "-")
-                        .replace("/", "-")
+                        filename_data["date"].replace(".", "-").replace("/", "-")
                     )
                     parts.append(date_clean)
                     metadata["fecha"] = filename_data["date"]
@@ -1902,9 +1975,7 @@ class PDFProcessor:
 
             # Si tampoco hay datos del nombre, retorna None
             if verbose:
-                print(
-                    f"  [WARN] Texto extraído: {len(text) if text else 0} caracteres"
-                )
+                print(f"  [WARN] Texto extraído: {len(text) if text else 0} caracteres")
             return None, None
 
         # Extrae información del texto del PDF
@@ -1961,9 +2032,7 @@ class PDFProcessor:
         else:
             # Si no hay DNI, no podemos generar el nombre
             if verbose:
-                print(
-                    "  [WARN] DNI no encontrado - requerido para generar nombre"
-                )
+                print("  [WARN] DNI no encontrado - requerido para generar nombre")
             return None, None
 
         # 2. NOMBRE (persona)
@@ -1974,8 +2043,7 @@ class PDFProcessor:
             if len(entity_words) >= 2:
                 # Si tiene 2-4 palabras y son mayúsculas, probablemente es nombre de persona
                 if all(
-                    word[0].isupper() if word else False
-                    for word in entity_words[:3]
+                    word[0].isupper() if word else False for word in entity_words[:3]
                 ):
                     person_name = entity
 
@@ -2006,9 +2074,7 @@ class PDFProcessor:
 
         if company_name:
             # Limpia y normaliza la empresa
-            company_clean = "_".join(
-                company_name.split()[:4]
-            )  # Máximo 4 palabras
+            company_clean = "_".join(company_name.split()[:4])  # Máximo 4 palabras
             company_clean = re.sub(r'[<>:"/\\|?*&]', "", company_clean)
             parts.append(company_clean)
             metadata["empresa"] = company_name
@@ -2056,12 +2122,10 @@ class PDFProcessor:
                 metadata["fecha"] = date
                 if verbose:
                     print(f"  📅 Fecha: {date}")
-            except:
+            except Exception:
                 pass
         elif filename_data.get("date"):
-            date_clean = (
-                filename_data["date"].replace(".", "-").replace("/", "-")
-            )
+            date_clean = filename_data["date"].replace(".", "-").replace("/", "-")
             parts.append(date_clean)
             metadata["fecha"] = filename_data["date"]
             if verbose:
