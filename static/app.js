@@ -586,7 +586,7 @@ function displayResults(resultsData, sessionId) {
                 </div>
             </div>
 
-            ${excelBannerHTML(initExcelInfo)}
+
 
             <div class="result-body">
             ${notes.length ? `
@@ -624,6 +624,7 @@ function displayResults(resultsData, sessionId) {
                     </div>
 
                     <div class="preview-block">
+                        ${excelBannerHTML(initExcelInfo)}   
                         <div class="preview-label">
                             Nombre generado
                             <span class="preview-label-badge" data-role="preview-badge">auto</span>
