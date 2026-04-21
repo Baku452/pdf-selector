@@ -5,3 +5,7 @@ uploads/
 .venv/
 .claude/
 PDF SETTER FILES/
+
+# License system — keep these private
+generate_license.py
+license.key

@@ -4,15 +4,16 @@ Web Application for PDF Renaming
 Flask-based web app that allows users to upload PDFs and get suggested names
 """
 
-import os
-import sys
-import shutil
-import zipfile
+import hmac
 import io
-import uuid
 import json
-import time
+import os
+import shutil
+import sys
 import threading
+import time
+import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -28,8 +29,23 @@ if "--test-imports" in sys.argv:
             errors.append(mod)
     sys.exit(1 if errors else 0)
 
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import (
+    Flask,
+    request,
+    jsonify,
+    render_template,
+    send_file,
+    redirect,
+    session,
+    url_for,
+)
 from pdf_processor import PDFProcessor
+from license_utils import (
+    get_machine_fingerprint,
+    is_licensed,
+    save_license,
+    validate_license,
+)
 
 # PyInstaller compatibility: templates/static relative to bundle/extracted dir
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(os.path.abspath(__file__)).parent))
@@ -50,7 +66,9 @@ app.config["MAX_CONTENT_LENGTH"] = (
     100 * 1024 * 1024
 )  # 100MB per request (batched uploads)
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
-app.config["SECRET_KEY"] = "your-secret-key-here"
+app.config["SECRET_KEY"] = os.environ.get(
+    "FLASK_SECRET_KEY", "change-this-in-production-use-env-var"
+)
 
 # Ensure upload folder exists
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -71,6 +89,81 @@ def request_entity_too_large(error):
 
 # Allowed extensions
 ALLOWED_EXTENSIONS = {"pdf"}
+
+# ── License / access guard ────────────────────────────────────────────────────
+_IS_VERCEL = bool(os.environ.get("VERCEL"))
+# Cache desktop license check for the lifetime of the process
+_desktop_licensed: bool | None = None
+
+_AUTH_EXEMPT = {"/activate", "/web-login", "/logout", "/get-fingerprint"}
+
+
+@app.before_request
+def check_access():
+    if request.path.startswith("/static") or request.path in _AUTH_EXEMPT:
+        return
+
+    if _IS_VERCEL:
+        # Web mode: require WEB_ACCESS_KEY env var + session flag
+        web_key = os.environ.get("WEB_ACCESS_KEY", "")
+        if not web_key:
+            return jsonify({"error": "WEB_ACCESS_KEY not configured on server"}), 503
+        if not session.get("web_authorized"):
+            if request.path == "/" or not request.path.startswith("/api/"):
+                return redirect(url_for("web_login"))
+            return jsonify({"error": "Unauthorized"}), 401
+    else:
+        # Desktop mode: machine-locked license file
+        global _desktop_licensed
+        if _desktop_licensed is None:
+            _desktop_licensed = is_licensed()
+        if not _desktop_licensed:
+            if request.path == "/" or not request.path.startswith("/api/"):
+                return redirect(url_for("activate"))
+            return jsonify({"error": "License required"}), 401
+
+
+@app.route("/activate", methods=["GET", "POST"])
+def activate():
+    if request.method == "POST":
+        key = request.form.get("license_key", "").strip()
+        if validate_license(key):
+            save_license(key)
+            global _desktop_licensed
+            _desktop_licensed = True
+            return redirect(url_for("index"))
+        return render_template(
+            "license.html",
+            fingerprint=get_machine_fingerprint(),
+            error="Clave inválida para este equipo. Verifica e inténtalo de nuevo.",
+        )
+    return render_template("license.html", fingerprint=get_machine_fingerprint())
+
+
+@app.route("/get-fingerprint")
+def get_fingerprint_route():
+    return jsonify({"fingerprint": get_machine_fingerprint()})
+
+
+@app.route("/web-login", methods=["GET", "POST"])
+def web_login():
+    if request.method == "POST":
+        key = request.form.get("access_key", "").strip()
+        web_key = os.environ.get("WEB_ACCESS_KEY", "")
+        if web_key and hmac.compare_digest(key, web_key):
+            session["web_authorized"] = True
+            return redirect(url_for("index"))
+        return render_template("web_login.html", error="Clave incorrecta.")
+    return render_template("web_login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    if _IS_VERCEL:
+        return redirect(url_for("web_login"))
+    return redirect(url_for("index"))
+
 
 # In-memory store for Excel lookup dicts keyed by session_id
 _excel_lookups: dict = {}
